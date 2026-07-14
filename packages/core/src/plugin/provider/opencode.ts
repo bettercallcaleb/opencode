@@ -12,6 +12,7 @@ import { ProviderV2 } from "../../provider"
 import { ConfigProviderV1 } from "../../v1/config/provider"
 import { ConfigProviderOptionsV1 } from "../../v1/config/provider-options"
 import { ConfigV1 } from "../../v1/config/config"
+import { Flag } from "../../flag/flag"
 
 const defaultServer = "https://console.opencode.ai"
 const clientID = "opencode-cli"
@@ -84,6 +85,11 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
     let providers: typeof ConfigV1.Info.Type.provider | undefined
 
     const load = Effect.fn("OpencodePlugin.load")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) {
+        connected = false
+        providers = undefined
+        return
+      }
       const connection = yield* ctx.integration.connection.active("opencode")
       const credential = connection
         ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
@@ -187,7 +193,9 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
   }),
 })
 
-function fetchProviders(http: HttpClient.HttpClient, value: CredentialValue) {
+export function fetchProviders(http: HttpClient.HttpClient, value: CredentialValue) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE)
+    return Effect.die(new Error("Remote configuration is disabled in enterprise mode"))
   const metadata = value.metadata
   const server = typeof metadata?.server === "string" ? metadata.server : defaultServer
   const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined

@@ -17,6 +17,7 @@ import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
 import { Effect, Option } from "effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -323,6 +324,9 @@ export const ProvidersLoginCommand = effectCmd({
     UI.empty()
     yield* Prompt.intro("Add credential")
     if (args.url) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) {
+        return yield* Effect.fail(new CliError({ message: "Remote configuration is disabled in enterprise mode" }))
+      }
       const url = args.url.replace(/\/+$/, "")
       const wellknown = (yield* cliTry(`Failed to load auth provider metadata from ${url}: `, () =>
         fetch(`${url}/.well-known/opencode`).then((x) => x.json()),

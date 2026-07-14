@@ -1,7 +1,7 @@
 import { expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Duration, Effect, Layer, Option, Schema } from "effect"
+import { Duration, Effect, Exit, Layer, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http"
 
@@ -20,6 +20,7 @@ import {
 } from "../../src/account/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const truncate = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -407,6 +408,51 @@ it.live("config sends the selected org header", () =>
       org: "org-9",
     })
   }),
+)
+
+it.live("enterprise config rejects before token refresh and preserves the stored account", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      return original
+    }),
+    () =>
+      Effect.gen(function* () {
+        const id = AccountID.make("enterprise-user")
+        yield* AccountRepo.Service.use((repo) =>
+          repo.persistAccount({
+            id,
+            email: "enterprise@example.com",
+            url: "https://control.example.com",
+            accessToken: AccessToken.make("at_old"),
+            refreshToken: RefreshToken.make("rt_old"),
+            expiry: Date.now() - 1,
+            orgID: Option.some(OrgID.make("org-9")),
+          }),
+        )
+        let requests = 0
+        const client = HttpClient.make(() =>
+          Effect.sync(() => {
+            requests++
+            throw new Error("unexpected request")
+          }),
+        )
+
+        const exit = yield* Account.Service.use((service) => service.config(id, OrgID.make("org-9")))
+          .pipe(Effect.provide(live(client)), Effect.exit)
+        const stored = Option.getOrThrow(yield* AccountRepo.Service.use((repo) => repo.getRow(id)))
+
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(requests).toBe(0)
+        expect(stored.access_token).toBe(AccessToken.make("at_old"))
+        expect(stored.refresh_token).toBe(RefreshToken.make("rt_old"))
+      }),
+    (original) =>
+      Effect.sync(() => {
+        Flag.OPENCODE_ENTERPRISE_MODE = original
+      }),
+  ),
 )
 
 it.live("poll stores the account and first org on success", () =>

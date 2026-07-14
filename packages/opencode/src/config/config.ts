@@ -136,6 +136,37 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 
 export const use = serviceUse(Service)
 
+export class RemoteConfigDisabledError extends Schema.TaggedErrorClass<RemoteConfigDisabledError>()(
+  "RemoteConfigDisabledError",
+  { message: Schema.String },
+) {}
+
+export const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(
+  http: HttpClient.HttpClient,
+  url: string,
+  headers: Record<string, string> | undefined,
+  schema: S,
+  loginOrigin: string,
+) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE)
+    return yield* Effect.fail(
+      new RemoteConfigDisabledError({ message: "Remote configuration is disabled in enterprise mode" }),
+    )
+  const response = yield* HttpClient.filterStatusOk(withTransientReadRetry(http))
+    .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers ?? {})))
+    .pipe(Effect.mapError((error) => new Error(`failed to fetch remote config from ${url}: ${String(error)}`)))
+  const body = yield* response.text.pipe(
+    Effect.mapError((error) => new Error(`failed to read remote config from ${url}: ${String(error)}`)),
+  )
+  const contentType = (response.headers["content-type"] ?? "").toLowerCase()
+  if (contentType.includes("html") || /^\s*<!doctype|^\s*<html/i.test(body)) {
+    return yield* Effect.fail(new RemoteAuthError({ url: loginOrigin, remote: url }))
+  }
+  return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
+    Effect.mapError((error) => new Error(`failed to decode remote config from ${url}: ${String(error)}`)),
+  )
+})
+
 function globalConfigFile() {
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
     path.join(Global.Path.config, file),
@@ -183,32 +214,6 @@ const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
 
     const readConfigFile = (filepath: string) => fs.readFileStringSafe(filepath).pipe(Effect.orDie)
-
-    const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(
-      url: string,
-      headers: Record<string, string> | undefined,
-      schema: S,
-      loginOrigin: string,
-    ) {
-      const response = yield* HttpClient.filterStatusOk(withTransientReadRetry(http))
-        .execute(
-          HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers ?? {})),
-        )
-        .pipe(
-          Effect.catch((error) => Effect.die(new Error(`failed to fetch remote config from ${url}: ${String(error)}`))),
-        )
-      const body = yield* response.text.pipe(
-        Effect.catch((error) => Effect.die(new Error(`failed to read remote config from ${url}: ${String(error)}`))),
-      )
-      // An auth proxy can answer with an HTML login page at HTTP 200 (passes filterStatusOk); treat it as a re-auth error, not a decode failure.
-      const contentType = (response.headers["content-type"] ?? "").toLowerCase()
-      if (contentType.includes("html") || /^\s*<!doctype|^\s*<html/i.test(body)) {
-        return yield* Effect.die(new RemoteAuthError({ url: loginOrigin, remote: url }))
-      }
-      return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
-        Effect.catch((error) => Effect.die(new Error(`failed to decode remote config from ${url}: ${String(error)}`))),
-      )
-    })
 
     const loadConfig = Effect.fnUntraced(function* (
       text: string,
@@ -354,13 +359,15 @@ const layer = Layer.effect(
           return mergePluginOrigins(source, next.plugin, kind)
         }
 
-        for (const [key, value] of Object.entries(auth)) {
+        for (const [key, value] of Flag.OPENCODE_ENTERPRISE_MODE ? [] : Object.entries(auth)) {
           if (value.type === "wellknown") {
             const url = key.replace(/\/+$/, "")
             authEnv[value.key] = value.token
             const wellknownURL = `${url}/.well-known/opencode`
             yield* Effect.logDebug("fetching remote config", { url: wellknownURL })
-            const wellknown = yield* fetchRemoteJson(wellknownURL, undefined, ConfigV1.WellKnown, url)
+            const wellknown = yield* fetchRemoteJson(http, wellknownURL, undefined, ConfigV1.WellKnown, url).pipe(
+              Effect.orDie,
+            )
             const remote = yield* Effect.promise(() =>
               substituteWellKnownRemoteConfig({
                 value: wellknown.remote_config,
@@ -372,7 +379,9 @@ const layer = Layer.effect(
             const fetchedConfig = remote
               ? yield* Effect.gen(function* () {
                   yield* Effect.logDebug("fetching remote config", { url: remote.url })
-                  const data = yield* fetchRemoteJson(remote.url, remote.headers, Schema.Json, url)
+                  const data = yield* fetchRemoteJson(http, remote.url, remote.headers, Schema.Json, url).pipe(
+                    Effect.orDie,
+                  )
                   if (isRecord(data) && isRecord(data.config)) return data.config
                   if (isRecord(data)) return data
                   return yield* Effect.die(
@@ -480,9 +489,9 @@ const layer = Layer.effect(
           yield* Effect.logDebug("loaded custom config from OPENCODE_CONFIG_CONTENT")
         }
 
-        const activeAccount = Option.getOrUndefined(
-          yield* accountSvc.active().pipe(Effect.catch(() => Effect.succeed(Option.none()))),
-        )
+        const activeAccount = Flag.OPENCODE_ENTERPRISE_MODE
+          ? undefined
+          : Option.getOrUndefined(yield* accountSvc.active().pipe(Effect.catch(() => Effect.succeed(Option.none()))))
         if (activeAccount?.active_org_id) {
           const accountID = activeAccount.id
           const orgID = activeAccount.active_org_id

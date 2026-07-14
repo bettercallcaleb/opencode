@@ -2,7 +2,7 @@ import { test, expect, describe, afterEach, beforeEach, spyOn } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Cause, Effect, Exit, Layer, Option } from "effect"
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { Config } from "@/config/config"
@@ -41,6 +41,7 @@ import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { AccountTest } from "../fake/account"
 import { AuthTest } from "../fake/auth"
 import { NpmTest } from "../fake/npm"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const unexpectedHttp = HttpClient.make((request) =>
   Effect.die(`unexpected http request: ${request.method} ${request.url}`),
@@ -110,6 +111,35 @@ const layer = configLayer()
 const it = testEffect(layer)
 const configIt = (options?: Parameters<typeof configLayer>[0]) => testEffect(configLayer(options))
 
+let enterpriseRequests = 0
+let enterpriseActive = 0
+let enterpriseConfig = 0
+let enterpriseToken = 0
+const enterpriseRemoteIt = configIt({
+  auth: wellKnownAuth("https://control.example.com"),
+  account: Layer.mock(Account.Service)({
+    active: () =>
+      Effect.sync(() => {
+        enterpriseActive++
+        return Option.some({
+          id: AccountID.make("account-1"),
+          email: "user@example.com",
+          url: "https://control.example.com",
+          active_org_id: OrgID.make("org-1"),
+        })
+      }),
+    activeOrg: () => Effect.succeed(Option.none()),
+    config: () => Effect.sync(() => (enterpriseConfig++, Option.some({ remote: true }))),
+    token: () => Effect.sync(() => (enterpriseToken++, Option.some(AccessToken.make("remote-token")))),
+  }),
+  client: HttpClient.make(() =>
+    Effect.sync(() => {
+      enterpriseRequests++
+      throw new Error("unexpected request")
+    }),
+  ),
+})
+
 const schemaConfig = (config: object) => ({ $schema: "https://opencode.ai/config.json", ...config })
 
 const provideCurrentInstance = <A, E, R>(effect: Effect.Effect<A, E, R>, ctx: InstanceContext) =>
@@ -132,6 +162,82 @@ const clear = (wait = false) => Effect.runPromise(clearEffect(wait))
 const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR!
 const originalTestToken = process.env.TEST_TOKEN
 const originalConsoleToken = process.env.OPENCODE_CONSOLE_TOKEN
+
+enterpriseRemoteIt.instance("enterprise mode ignores remote config while preserving local config", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      const config = Flag.OPENCODE_CONFIG
+      const content = process.env.OPENCODE_CONFIG_CONTENT
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      enterpriseRequests = 0
+      enterpriseActive = 0
+      enterpriseConfig = 0
+      enterpriseToken = 0
+      delete process.env.OPENCODE_CONSOLE_TOKEN
+      process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+        provider: { content: { api: "https://vllm.internal/v1" } },
+      })
+      return { original, config, content }
+    }),
+    ({ original: _original, config: _config, content: _content }) =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        yield* FSUtil.use.writeWithDirs(
+          path.join(Global.Path.config, "opencode.json"),
+          JSON.stringify({ provider: { global: { api: "http://127.0.0.1:7000/v1" } } }),
+        )
+        const custom = path.join(test.directory, "admin.json")
+        yield* FSUtil.use.writeFileString(
+          custom,
+          JSON.stringify({ provider: { admin: { api: "https://admin-vllm.internal/v1" } } }),
+        )
+        Flag.OPENCODE_CONFIG = custom
+        yield* writeConfigEffect(test.directory, {
+          provider: { local: { api: "http://127.0.0.1:8000/v1" } },
+        })
+        const config = yield* Config.use.get()
+
+        expect(config.provider?.local?.api).toBe("http://127.0.0.1:8000/v1")
+        expect(config.provider?.global?.api).toBe("http://127.0.0.1:7000/v1")
+        expect(config.provider?.admin?.api).toBe("https://admin-vllm.internal/v1")
+        expect(config.provider?.content?.api).toBe("https://vllm.internal/v1")
+        expect(enterpriseRequests).toBe(0)
+        expect(enterpriseActive).toBe(0)
+        expect(enterpriseConfig).toBe(0)
+        expect(enterpriseToken).toBe(0)
+        expect(process.env.OPENCODE_CONSOLE_TOKEN).toBeUndefined()
+      }),
+    ({ original, config, content }) =>
+      Effect.sync(() => {
+        Flag.OPENCODE_ENTERPRISE_MODE = original
+        Flag.OPENCODE_CONFIG = config
+        if (content === undefined) delete process.env.OPENCODE_CONFIG_CONTENT
+        else process.env.OPENCODE_CONFIG_CONTENT = content
+      }),
+  ),
+)
+
+test("enterprise remote JSON boundary rejects before HTTP execution", async () => {
+  const original = Flag.OPENCODE_ENTERPRISE_MODE
+  let requests = 0
+  Flag.OPENCODE_ENTERPRISE_MODE = true
+  try {
+    const http = HttpClient.make(() =>
+      Effect.sync(() => {
+        requests++
+        throw new Error("unexpected request")
+      }),
+    )
+    const exit = await Effect.runPromiseExit(
+      Config.fetchRemoteJson(http, "https://config.example.com/opencode.json", undefined, Schema.Json, "https://example.com"),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(requests).toBe(0)
+  } finally {
+    Flag.OPENCODE_ENTERPRISE_MODE = original
+  }
+})
 
 beforeEach(async () => {
   await clear(true)

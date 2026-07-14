@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
+import { HttpClient } from "effect/unstable/http"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Credential } from "@opencode-ai/core/credential"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -7,10 +8,11 @@ import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
-import { OpencodePlugin } from "@opencode-ai/core/plugin/provider/opencode"
+import { OpencodePlugin, fetchProviders } from "@opencode-ai/core/plugin/provider/opencode"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(PluginTestLayer)
 
@@ -68,6 +70,36 @@ function withEnv<A, E, R>(vars: Record<string, string | undefined>, effect: () =
 const cost = (input: number, output = 0) => [{ input, output, cache: { read: 0, write: 0 } }]
 
 describe("OpencodePlugin", () => {
+  it.effect("blocks direct remote provider config before HTTP execution in enterprise mode", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          let requests = 0
+          const http = HttpClient.make(() =>
+            Effect.sync(() => {
+              requests++
+              throw new Error("unexpected request")
+            }),
+          )
+          const exit = yield* fetchProviders(
+            http,
+            Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.opencode.ai" } }),
+          ).pipe(Effect.exit)
+          expect(Exit.isFailure(exit)).toBe(true)
+          expect(requests).toBe(0)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.effect("registers account and service account methods", () =>
     Effect.gen(function* () {
       yield* addPlugin()

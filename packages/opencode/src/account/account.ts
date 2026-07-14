@@ -13,6 +13,7 @@ import {
 import { withTransientReadRetry } from "@/util/effect-http-client"
 import { AccountRepo, type AccountRow } from "./repo"
 import { normalizeServerUrl } from "./url"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import {
   type AccountError,
   AccessToken,
@@ -361,6 +362,11 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const config = Effect.fn("Account.config")(function* (accountID: AccountID, orgID: OrgID) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) {
+        return yield* Effect.fail(
+          new AccountServiceError({ message: "Remote configuration is disabled in enterprise mode" }),
+        )
+      }
       const resolved = yield* resolveAccess(accountID)
       if (Option.isNone(resolved)) return Option.none()
 
