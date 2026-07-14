@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createUpdaterController, type UpdaterBackend, type UpdaterReadyRecord } from "./updater-controller"
 
-function setup(input?: { currentVersion?: string; ready?: UpdaterReadyRecord }) {
+function setup(input?: { currentVersion?: string; ready?: UpdaterReadyRecord; enabled?: boolean }) {
   const calls: string[] = []
   const backend: UpdaterBackend = {
     async checkForUpdates() {
@@ -17,7 +17,7 @@ function setup(input?: { currentVersion?: string; ready?: UpdaterReadyRecord }) 
   }
   let ready = input?.ready
   const controller = createUpdaterController({
-    enabled: true,
+    enabled: input?.enabled ?? true,
     currentVersion: input?.currentVersion ?? "1.0.0",
     backend,
     persistence: {
@@ -37,6 +37,23 @@ function setup(input?: { currentVersion?: string; ready?: UpdaterReadyRecord }) 
 }
 
 describe("updater controller", () => {
+  test("disabled start and check do not call the updater backend", async () => {
+    const app = setup({ enabled: false })
+
+    expect(await app.controller.start()).toEqual({ status: "disabled" })
+    expect(await app.controller.check()).toEqual({ status: "disabled" })
+    expect(app.calls).toEqual([])
+  })
+
+  test("disabled controller cannot install a persisted ready update", async () => {
+    const app = setup({ enabled: false, ready: { version: "2.0.0" } })
+
+    expect(await app.controller.start()).toEqual({ status: "disabled" })
+    await expect(app.controller.install()).rejects.toThrow("Updater is disabled")
+    expect(app.calls).toEqual([])
+    expect(app.getReady()).toEqual({ version: "2.0.0" })
+  })
+
   test("checks, downloads, persists, and publishes one authoritative ready state", async () => {
     const app = setup()
     const states: ReturnType<typeof app.controller.getState>[] = []

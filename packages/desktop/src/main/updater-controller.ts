@@ -71,12 +71,14 @@ export function createUpdaterController(input: {
       return () => listeners.delete(listener)
     },
     async start() {
+      if (!input.enabled) return state
       const ready = await input.persistence.get()
       if (ready?.version === input.currentVersion) await input.persistence.clear()
       return check()
     },
     check,
     async install() {
+      if (!input.enabled) throw new Error("Updater is disabled")
       if (state.status !== "ready") throw new Error("Update is not ready to install")
       const version = state.version
       transition({ status: "installing", version })
