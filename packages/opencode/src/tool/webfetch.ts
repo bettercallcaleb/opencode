@@ -5,6 +5,9 @@ import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+export const ENTERPRISE_DISABLED_MESSAGE = "Web access tools are disabled in enterprise mode"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -32,6 +35,7 @@ export const WebFetchTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
           if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
             throw new Error("URL must start with http:// or https://")
           }

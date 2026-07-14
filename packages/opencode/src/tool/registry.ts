@@ -54,8 +54,10 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { McpCatalog } from "@/mcp/catalog"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return false
   return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
 }
 
@@ -210,9 +212,9 @@ const layer = Layer.effect(
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
-          fetch: Tool.init(webfetch),
+          ...(Flag.OPENCODE_ENTERPRISE_MODE ? {} : { fetch: Tool.init(webfetch) }),
           todo: Tool.init(todo),
-          search: Tool.init(websearch),
+          ...(Flag.OPENCODE_ENTERPRISE_MODE ? {} : { search: Tool.init(websearch) }),
           skill: Tool.init(skilltool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
@@ -233,9 +235,9 @@ const layer = Layer.effect(
             tool.edit,
             tool.write,
             tool.task,
-            tool.fetch,
+            ...(tool.fetch ? [tool.fetch] : []),
             tool.todo,
-            tool.search,
+            ...(tool.search ? [tool.search] : []),
             tool.skill,
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
@@ -250,7 +252,9 @@ const layer = Layer.effect(
 
     const all: Interface["all"] = Effect.fn("ToolRegistry.all")(function* () {
       const s = yield* InstanceState.get(state)
-      return [...s.builtin, ...s.custom] as Tool.Def[]
+      const tools = [...s.builtin, ...s.custom] as Tool.Def[]
+      if (!Flag.OPENCODE_ENTERPRISE_MODE) return tools
+      return tools.filter((tool) => tool.id !== WebFetchTool.id && tool.id !== WebSearchTool.id)
     })
 
     const ids: Interface["ids"] = Effect.fn("ToolRegistry.ids")(function* () {

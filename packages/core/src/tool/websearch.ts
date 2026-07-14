@@ -5,7 +5,7 @@ import { Context, Duration, Effect, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
-import { truthy } from "../flag/flag"
+import { Flag, truthy } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 import { PositiveInt } from "../schema"
 import { PermissionV2 } from "../permission"
@@ -16,6 +16,7 @@ import { checksum } from "../util/encode"
 import { ToolRegistry } from "./registry"
 
 export const name = "websearch"
+export const ENTERPRISE_DISABLED_MESSAGE = "Web access tools are disabled in enterprise mode"
 export const NO_RESULTS = "No search results found. Please try a different query."
 export const EXA_URL = "https://mcp.exa.ai/mcp"
 export const PARALLEL_URL = "https://search.parallel.ai/mcp"
@@ -158,6 +159,7 @@ const callMcp = <F extends Schema.Struct.Fields>(
   headers: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* Effect.fail(new Error(ENTERPRISE_DISABLED_MESSAGE))
     const request = yield* HttpClientRequest.post(url).pipe(
       HttpClientRequest.accept("application/json, text/event-stream"),
       HttpClientRequest.setHeaders(headers),
@@ -191,6 +193,7 @@ const Output = Schema.Struct({
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return
     const tools = yield* Tools.Service
     const http = yield* HttpClient.HttpClient
     const config = yield* ConfigService
@@ -204,6 +207,8 @@ const layer = Layer.effectDiscard(
           output: Output,
           toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
           execute: (input, context) => {
+            if (Flag.OPENCODE_ENTERPRISE_MODE)
+              return Effect.fail(new ToolFailure({ message: ENTERPRISE_DISABLED_MESSAGE }))
             const provider = selectProvider(context.sessionID, config, config.provider)
             return Effect.gen(function* () {
               yield* permission.assert({

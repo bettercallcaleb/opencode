@@ -1,5 +1,8 @@
 import { Duration, Effect, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+export const ENTERPRISE_DISABLED_MESSAGE = "Web access tools are disabled in enterprise mode"
 
 export const EXA_URL = process.env.EXA_API_KEY
   ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
@@ -76,6 +79,7 @@ export const call = <F extends Schema.Struct.Fields>(
   headers?: Record<string, string>,
 ) =>
   Effect.gen(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* Effect.fail(new Error(ENTERPRISE_DISABLED_MESSAGE))
     const request = yield* HttpClientRequest.post(url).pipe(
       HttpClientRequest.accept("application/json, text/event-stream"),
       HttpClientRequest.setHeaders(headers ?? {}),

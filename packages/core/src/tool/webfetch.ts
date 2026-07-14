@@ -12,8 +12,10 @@ import { collectBoundedResponseBody } from "./http-body"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
+import { Flag } from "../flag/flag"
 
 export const name = "webfetch"
+export const ENTERPRISE_DISABLED_MESSAGE = "Web access tools are disabled in enterprise mode"
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 export const DEFAULT_TIMEOUT_SECONDS = 30
 export const MAX_TIMEOUT_SECONDS = 120
@@ -117,6 +119,7 @@ const convert = (content: string, contentType: string, format: Format) => {
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return
     const tools = yield* Tools.Service
     const http = yield* HttpClient.HttpClient
     const permission = yield* PermissionV2.Service
@@ -128,8 +131,10 @@ const layer = Layer.effectDiscard(
           input: Input,
           output: Output,
           toModelOutput: ({ output }) => [{ type: "text", text: output.output }],
-          execute: (input, context) =>
-            Effect.gen(function* () {
+          execute: (input, context) => {
+            if (Flag.OPENCODE_ENTERPRISE_MODE)
+              return Effect.fail(new ToolFailure({ message: ENTERPRISE_DISABLED_MESSAGE }))
+            return Effect.gen(function* () {
               yield* Effect.try({
                 try: () => assertHttpUrl(new URL(input.url)),
                 catch: (error) => error,
@@ -173,7 +178,8 @@ const layer = Layer.effectDiscard(
                 format: input.format,
                 output,
               }
-            }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to fetch ${input.url}` }))),
+            }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to fetch ${input.url}` })))
+          },
         }),
       })
       .pipe(Effect.orDie)

@@ -8,6 +8,7 @@ import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { WebSearchTool } from "@opencode-ai/core/tool/websearch"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { testEffect } from "./lib/effect"
 import { toolIdentity, executeTool, settleTool, toolDefinitions } from "./lib/tool"
@@ -136,6 +137,40 @@ const it = testEffect(
 )
 
 describe("WebSearchTool registration", () => {
+  it.effect("is hidden in enterprise mode and direct execution performs no permission or HTTP calls", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        requests.length = 0
+        assertions.length = 0
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = false
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          config = { provider: "parallel", enableExa: true, enableParallel: true }
+          const registry = yield* ToolRegistry.Service
+          const materialized = yield* registry.materialize()
+          Flag.OPENCODE_ENTERPRISE_MODE = true
+
+          expect((yield* toolDefinitions(registry)).map((tool) => tool.name)).toEqual([])
+          expect(
+            yield* materialized.settle({
+              sessionID,
+              ...toolIdentity,
+              call: { type: "tool-call", id: "enterprise-websearch", name: "websearch", input: { query: "x" } },
+            }),
+          ).toEqual({ result: { type: "error", value: WebSearchTool.ENTERPRISE_DISABLED_MESSAGE } })
+          expect(assertions).toEqual([])
+          expect(requests).toEqual([])
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.effect("registers websearch, asserts query permission, and calls Exa", () =>
     Effect.gen(function* () {
       requests.length = 0

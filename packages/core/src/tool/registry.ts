@@ -12,6 +12,7 @@ import { ApplicationTools } from "./application-tools"
 import { definition, permission, settle, validateName, type AnyTool, type RegistrationError } from "./tool"
 import { Tools } from "./tools"
 import { makeLocationNode } from "../effect/app-node"
+import { Flag } from "../flag/flag"
 
 export type ExecuteInput = {
   readonly sessionID: SessionSchema.ID
@@ -111,6 +112,10 @@ const registryLayer = Layer.effect(
         }
         for (const [name, registration] of registrations)
           if (whollyDisabled(permission(registration.tool, name), permissions)) registrations.delete(name)
+        if (Flag.OPENCODE_ENTERPRISE_MODE) {
+          registrations.delete("webfetch")
+          registrations.delete("websearch")
+        }
         return {
           definitions: Array.from(registrations, ([name, registration]) => definition(name, registration.tool)),
           settle: (input) => {

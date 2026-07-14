@@ -12,6 +12,7 @@ import { WebFetchTool } from "@opencode-ai/core/tool/webfetch"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { testEffect } from "./lib/effect"
 import { toolIdentity, executeTool, settleTool, toolDefinitions } from "./lib/tool"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const sessionID = SessionV2.ID.make("ses_webfetch_test")
 const requests: Array<{ readonly url: string; readonly headers: Record<string, string> }> = []
@@ -76,6 +77,34 @@ describe("WebFetchTool helpers", () => {
 })
 
 describe("WebFetchTool registration", () => {
+  it.effect("is hidden in enterprise mode and direct execution performs no permission or HTTP calls", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        reset()
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = false
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const materialized = yield* registry.materialize()
+          Flag.OPENCODE_ENTERPRISE_MODE = true
+
+          expect((yield* toolDefinitions(registry)).map((tool) => tool.name)).toEqual([])
+          expect(
+            yield* materialized.settle(call({ url: "https://example.com", format: "text" })),
+          ).toEqual({ result: { type: "error", value: WebFetchTool.ENTERPRISE_DISABLED_MESSAGE } })
+          expect(assertions).toEqual([])
+          expect(requests).toEqual([])
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.effect("registers and fetches an ordinary hostname HTTP URL without rewriting it", () =>
     Effect.gen(function* () {
       reset()

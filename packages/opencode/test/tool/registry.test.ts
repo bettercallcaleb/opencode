@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import { fileURLToPath, pathToFileURL } from "url"
 import { Effect, Layer, Result, Schema } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { ToolRegistry } from "@/tool/registry"
+import { ToolRegistry, webSearchEnabled } from "@/tool/registry"
 import { Tool } from "@/tool/tool"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -21,6 +21,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { MCP } from "@/mcp"
 import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".opencode")])),
@@ -100,6 +101,37 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
+  it.instance("does not expose web access tools in enterprise mode", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const agent = yield* Agent.Service
+          const ids = yield* registry.ids()
+          const tools = yield* registry.tools({
+            providerID: ProviderV2.ID.opencode,
+            modelID: ModelV2.ID.make("test"),
+            agent: yield* agent.defaultInfo(),
+          })
+
+          expect(ids).not.toContain("webfetch")
+          expect(ids).not.toContain("websearch")
+          expect(tools.map((tool) => tool.id)).not.toContain("webfetch")
+          expect(tools.map((tool) => tool.id)).not.toContain("websearch")
+          expect(webSearchEnabled(ProviderV2.ID.opencode, { exa: true, parallel: true })).toBe(false)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.instance("does not expose task_status", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
