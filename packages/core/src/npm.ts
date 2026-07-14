@@ -12,6 +12,7 @@ import { filesystem } from "./effect/app-node-platform"
 import { LayerNode } from "./effect/layer-node"
 import { makeRuntime } from "./effect/runtime"
 import { NpmConfig } from "./npm-config"
+import { Flag } from "./flag/flag"
 
 export class InstallFailedError extends Schema.TaggedErrorClass<InstallFailedError>()("NpmInstallFailedError", {
   add: Schema.Array(Schema.String).pipe(Schema.optional),
@@ -19,13 +20,24 @@ export class InstallFailedError extends Schema.TaggedErrorClass<InstallFailedErr
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
+export class RuntimeInstallDisabledError extends Schema.TaggedErrorClass<RuntimeInstallDisabledError>()(
+  "NpmRuntimeInstallDisabledError",
+  {},
+) {
+  override get message() {
+    return "Runtime package installation is disabled in enterprise mode"
+  }
+}
+
 export interface EntryPoint {
   readonly directory: string
   readonly entrypoint?: string
 }
 
 export interface Interface {
-  readonly add: (pkg: string) => Effect.Effect<EntryPoint, InstallFailedError | EffectFlock.LockError>
+  readonly add: (
+    pkg: string,
+  ) => Effect.Effect<EntryPoint, InstallFailedError | EffectFlock.LockError | RuntimeInstallDisabledError>
   readonly install: (
     dir: string,
     input?: {
@@ -34,7 +46,7 @@ export interface Interface {
         version?: string
       }[]
     },
-  ) => Effect.Effect<void, EffectFlock.LockError | InstallFailedError>
+  ) => Effect.Effect<void, EffectFlock.LockError | InstallFailedError | RuntimeInstallDisabledError>
   readonly which: (pkg: string, bin?: string) => Effect.Effect<string | undefined>
 }
 
@@ -79,6 +91,7 @@ const layer = Layer.effect(
     const directory = (pkg: string) => path.join(global.cache, "packages", sanitize(pkg))
     const reify = (input: { dir: string; add?: string[] }) =>
       Effect.gen(function* () {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* new RuntimeInstallDisabledError()
         yield* flock.acquire(`npm-install:${input.dir}`)
         const { Arborist } = yield* Effect.promise(() => import("@npmcli/arborist"))
         const add = input.add ?? []
@@ -225,6 +238,8 @@ const layer = Layer.effect(
           if (Option.isSome(bin)) {
             return Option.some(path.join(binDir, bin.value))
           }
+
+          if (Flag.OPENCODE_ENTERPRISE_MODE) return Option.none<string>()
 
           yield* fs.remove(path.join(dir, "package-lock.json")).pipe(Effect.orElseSucceed(() => {}))
 
