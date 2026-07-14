@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test"
 import { determineScope } from "@modelcontextprotocol/sdk/client/auth.js"
 import { McpOAuthProvider, OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH } from "../../src/mcp/oauth-provider"
 import type { McpAuth } from "../../src/mcp/auth"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 // Stub auth — only synchronous getters are exercised in these tests
 const stubAuth = {} as McpAuth.Interface
@@ -98,5 +99,34 @@ describe("MCP OAuth scope selection", () => {
         clientMetadata: makeProvider({}).clientMetadata,
       }),
     ).toBe("resource.read")
+  })
+})
+
+describe("enterprise mode", () => {
+  test("blocks cached providers before token lookup or redirect", async () => {
+    const original = Flag.OPENCODE_ENTERPRISE_MODE
+    let tokenLookups = 0
+    try {
+      Flag.OPENCODE_ENTERPRISE_MODE = false
+      const provider = new McpOAuthProvider(
+        "test-server",
+        "https://mcp.example.com/mcp",
+        {},
+        { onRedirect: async () => {} },
+        {
+          getForUrl: () => {
+            tokenLookups++
+            throw new Error("token lookup must not run")
+          },
+        } as unknown as McpAuth.Interface,
+      )
+
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      expect(() => provider.redirectUrl).toThrow("MCP is disabled in enterprise mode")
+      await expect(provider.tokens()).rejects.toThrow("MCP is disabled in enterprise mode")
+      expect(tokenLookups).toBe(0)
+    } finally {
+      Flag.OPENCODE_ENTERPRISE_MODE = original
+    }
   })
 })

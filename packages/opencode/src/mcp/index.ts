@@ -34,6 +34,9 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { McpCatalog } from "./catalog"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+export const ENTERPRISE_DISABLED_MESSAGE = "MCP is disabled in enterprise mode"
 
 const DEFAULT_TIMEOUT = 30_000
 const CLIENT_OPTIONS = {
@@ -73,6 +76,7 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("MCP
 type MCPClient = Client
 
 function createClient(directory: string) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
   const client = new Client({ name: "opencode", version: InstallationVersion }, CLIENT_OPTIONS)
   client.setRequestHandler(ListRootsRequestSchema, () =>
     Promise.resolve({ roots: [{ uri: pathToFileURL(directory).href }] }),
@@ -216,6 +220,7 @@ const layer = Layer.effect(
      * on failure the transport is closed; on success the caller owns it.
      */
     const connectTransport = Effect.fn("MCP.connectTransport")(function* (transport: Transport, timeout: number) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const directory = yield* InstanceState.directory
       return yield* Effect.acquireUseRelease(
         Effect.succeed(transport),
@@ -237,6 +242,7 @@ const layer = Layer.effect(
       key: string,
       mcp: ConfigMCPV1.Info & { type: "remote" },
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const oauthDisabled = mcp.oauth === false
       const oauthConfig = typeof mcp.oauth === "object" ? mcp.oauth : undefined
       const url = remoteURL(mcp.url)
@@ -341,6 +347,7 @@ const layer = Layer.effect(
       key: string,
       mcp: ConfigMCPV1.Info & { type: "local" },
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const [cmd, ...args] = mcp.command
       const baseDir = yield* InstanceState.directory
       const cwd = mcp.cwd ? path.resolve(baseDir, mcp.cwd) : baseDir
@@ -371,6 +378,7 @@ const layer = Layer.effect(
 
     const create = Effect.fn("MCP.create")(
       function* (key: string, mcp: ConfigMCPV1.Info) {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return DISABLED_RESULT
         if (mcp.enabled === false) {
           return DISABLED_RESULT
         }
@@ -501,6 +509,7 @@ const layer = Layer.effect(
           defs: {},
           instructions: {},
         }
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return s
 
         yield* Effect.forEach(
           Object.entries(config),
@@ -589,6 +598,15 @@ const layer = Layer.effect(
     })
 
     const status = Effect.fn("MCP.status")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) {
+        pendingOAuthTransports.clear()
+        const config = (yield* cfgSvc.get()).mcp ?? {}
+        return Object.fromEntries(
+          Object.entries(config).flatMap(([name, entry]) =>
+            isMcpConfigured(entry) ? [[name, { status: "disabled" } satisfies Status]] : [],
+          ),
+        )
+      }
       const s = yield* InstanceState.get(state)
 
       const cfg = yield* cfgSvc.get()
@@ -608,11 +626,13 @@ const layer = Layer.effect(
     })
 
     const clients = Effect.fn("MCP.clients")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       const s = yield* InstanceState.get(state)
       return s.clients
     })
 
     const instructions = Effect.fn("MCP.instructions")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return []
       const s = yield* InstanceState.get(state)
       return Object.entries(s.instructions)
         .filter(([name]) => s.status[name]?.status === "connected")
@@ -625,6 +645,7 @@ const layer = Layer.effect(
     })
 
     const createAndStore = Effect.fn("MCP.createAndStore")(function* (name: string, mcp: ConfigMCPV1.Info) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const s = yield* InstanceState.get(state)
       const result = yield* create(name, mcp)
 
@@ -639,6 +660,7 @@ const layer = Layer.effect(
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const s = yield* InstanceState.get(state)
       s.config[name] = mcp
       yield* createAndStore(name, mcp)
@@ -646,11 +668,13 @@ const layer = Layer.effect(
     })
 
     const connect = Effect.fn("MCP.connect")(function* (name: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const mcp = yield* requireMcpConfig(name)
       yield* createAndStore(name, { ...mcp, enabled: true })
     })
 
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       yield* requireMcpConfig(name)
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
@@ -664,6 +688,7 @@ const layer = Layer.effect(
     }
 
     const tools = Effect.fn("MCP.tools")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       const result: Record<string, McpTool> = {}
       const s = yield* InstanceState.get(state)
 
@@ -714,10 +739,12 @@ const layer = Layer.effect(
     }
 
     const prompts = Effect.fn("MCP.prompts")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       return yield* collectFromConnected(yield* InstanceState.get(state), McpCatalog.prompts, "prompts")
     })
 
     const resources = Effect.fn("MCP.resources")(function* (clientName?: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       return yield* collectFromConnected(
         yield* InstanceState.get(state),
         McpCatalog.resources,
@@ -728,6 +755,7 @@ const layer = Layer.effect(
     })
 
     const resourceTemplates = Effect.fn("MCP.resourceTemplates")(function* (clientName?: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       return yield* collectFromConnected(
         yield* InstanceState.get(state),
         McpCatalog.resourceTemplates,
@@ -743,6 +771,7 @@ const layer = Layer.effect(
       label: string,
       meta?: Record<string, unknown>,
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return undefined
       const s = yield* InstanceState.get(state)
       const client = s.clients[clientName]
       if (!client) {
@@ -804,6 +833,7 @@ const layer = Layer.effect(
     })
 
     const startAuth = Effect.fn("MCP.startAuth")(function* (mcpName: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const mcpConfig = yield* requireMcpConfig(mcpName)
       if (mcpConfig.type !== "remote") throw new Error(`MCP server ${mcpName} is not a remote server`)
       if (mcpConfig.oauth === false) throw new Error(`MCP server ${mcpName} has OAuth explicitly disabled`)
@@ -873,6 +903,7 @@ const layer = Layer.effect(
       mcpName: string,
       onAuthorization?: (authorizationUrl: string) => void,
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       const result = yield* startAuth(mcpName)
       if (!result.authorizationUrl) {
         const client = "client" in result ? result.client : undefined
@@ -916,6 +947,7 @@ const layer = Layer.effect(
     })
 
     const finishAuth = Effect.fn("MCP.finishAuth")(function* (mcpName: string, authorizationCode: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       yield* requireMcpConfig(mcpName)
       const pending = pendingOAuthTransports.get(mcpName)
       if (!pending) throw new Error(`No pending OAuth flow for MCP server: ${mcpName}`)
@@ -942,22 +974,26 @@ const layer = Layer.effect(
     })
 
     const removeAuth = Effect.fn("MCP.removeAuth")(function* (mcpName: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(ENTERPRISE_DISABLED_MESSAGE)
       yield* auth.remove(mcpName)
       McpOAuthCallback.cancelPending(mcpName)
       pendingOAuthTransports.delete(mcpName)
     })
 
     const supportsOAuth = Effect.fn("MCP.supportsOAuth")(function* (mcpName: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return false
       const mcpConfig = yield* requireMcpConfig(mcpName)
       return mcpConfig.type === "remote" && mcpConfig.oauth !== false
     })
 
     const hasStoredTokens = Effect.fn("MCP.hasStoredTokens")(function* (mcpName: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return false
       const entry = yield* auth.get(mcpName)
       return !!entry?.tokens
     })
 
     const getAuthStatus = Effect.fn("MCP.getAuthStatus")(function* (mcpName: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return "not_authenticated" as const
       const runtimeConfig = (yield* InstanceState.has(state))
         ? (yield* InstanceState.get(state)).config[mcpName]
         : undefined

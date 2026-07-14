@@ -4,6 +4,7 @@ import { effectCmd } from "../effect-cmd"
 import { Cause } from "effect"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
 import * as prompts from "@clack/prompts"
@@ -178,6 +179,7 @@ export const McpAuthCommand = effectCmd({
       })
       .command(McpAuthListCommand),
   handler: Effect.fn("Cli.mcp.auth")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
     UI.empty()
     prompts.intro("MCP OAuth Authentication")
 
@@ -308,6 +310,7 @@ export const McpAuthListCommand = effectCmd({
   aliases: ["ls"],
   describe: "list OAuth-capable MCP servers and their auth status",
   handler: Effect.fn("Cli.mcp.auth.list")(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
     UI.empty()
     prompts.intro("MCP OAuth Status")
 
@@ -342,6 +345,7 @@ export const McpLogoutCommand = effectCmd({
       type: "string",
     }),
   handler: Effect.fn("Cli.mcp.logout")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
     UI.empty()
     prompts.intro("MCP OAuth Logout")
 
@@ -450,6 +454,7 @@ export const McpAddCommand = effectCmd({
         array: true,
       }),
   handler: Effect.fn("Cli.mcp.add")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
     const maybeCtx = yield* InstanceRef
     if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
     const ctx = maybeCtx
@@ -666,6 +671,7 @@ export const McpDebugCommand = effectCmd({
       demandOption: true,
     }),
   handler: Effect.fn("Cli.mcp.debug")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
     const config = yield* Config.Service.use((cfg) => cfg.get())
     const mcp = yield* MCP.Service
     const auth = yield* McpAuth.Service

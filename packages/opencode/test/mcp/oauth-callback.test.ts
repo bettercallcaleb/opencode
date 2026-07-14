@@ -2,6 +2,7 @@ import { test, expect, describe, afterEach } from "bun:test"
 import { createConnection, createServer as createNetServer } from "net"
 import { McpOAuthCallback } from "../../src/mcp/oauth-callback"
 import { parseRedirectUri } from "../../src/mcp/oauth-provider"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 async function getFreeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -110,5 +111,17 @@ describe("McpOAuthCallback.ensureRunning", () => {
 
     expect(await canConnect("127.0.0.1", port)).toBe(true)
     expect(await canConnect("::1", port)).toBe(false)
+  })
+
+  test("enterprise mode rejects before creating a callback listener", async () => {
+    const original = Flag.OPENCODE_ENTERPRISE_MODE
+    try {
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      await expect(McpOAuthCallback.ensureRunning("not a URL")).rejects.toThrow("MCP is disabled in enterprise mode")
+      await expect(McpOAuthCallback.waitForCallback("state")).rejects.toThrow("MCP is disabled in enterprise mode")
+      expect(McpOAuthCallback.isRunning()).toBe(false)
+    } finally {
+      Flag.OPENCODE_ENTERPRISE_MODE = original
+    }
   })
 })

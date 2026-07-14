@@ -2,6 +2,7 @@ import { createConnection } from "net"
 import { createServer } from "http"
 import { OauthCallbackPage } from "@opencode-ai/core/oauth/page"
 import { OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH, parseRedirectUri } from "./oauth-provider"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const OAUTH_CALLBACK_HOST = "127.0.0.1"
 
@@ -103,6 +104,7 @@ function handleRequest(req: import("http").IncomingMessage, res: import("http").
 }
 
 export async function ensureRunning(redirectUri?: string): Promise<void> {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error("MCP is disabled in enterprise mode")
   // Parse the redirect URI to get port and path (uses defaults if not provided)
   const { port, path } = parseRedirectUri(redirectUri)
 
@@ -131,6 +133,7 @@ export async function ensureRunning(redirectUri?: string): Promise<void> {
 }
 
 export function waitForCallback(oauthState: string, mcpName?: string): Promise<string> {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return Promise.reject(new Error("MCP is disabled in enterprise mode"))
   if (mcpName) mcpNameToState.set(mcpName, oauthState)
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {

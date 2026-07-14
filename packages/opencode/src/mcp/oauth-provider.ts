@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js"
 import { Effect } from "effect"
 import { McpAuth } from "./auth"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const OAUTH_CALLBACK_PORT = 19876
 const OAUTH_CALLBACK_PATH = "/mcp/oauth/callback"
@@ -30,9 +31,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
     protected config: McpOAuthConfig,
     private callbacks: McpOAuthCallbacks,
     protected auth: McpAuth.Interface,
-  ) {}
+  ) {
+    this.ensureEnabled()
+  }
+
+  protected ensureEnabled() {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error("MCP is disabled in enterprise mode")
+  }
 
   get redirectUrl(): string {
+    this.ensureEnabled()
     if (this.config.redirectUri) {
       return this.config.redirectUri
     }
@@ -41,6 +49,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
+    this.ensureEnabled()
     return {
       redirect_uris: [this.redirectUrl],
       client_name: "OpenCode",
@@ -53,6 +62,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformation | undefined> {
+    this.ensureEnabled()
     if (this.config.clientId) {
       return {
         client_id: this.config.clientId,
@@ -79,6 +89,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    this.ensureEnabled()
     await Effect.runPromise(
       this.auth.updateClientInfo(
         this.mcpName,
@@ -94,6 +105,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
+    this.ensureEnabled()
     // Use getForUrl to validate tokens are for the current server URL
     const entry = await Effect.runPromise(this.auth.getForUrl(this.mcpName, this.serverUrl))
     if (!entry?.tokens) return undefined
@@ -110,6 +122,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.ensureEnabled()
     await Effect.runPromise(
       this.auth.updateTokens(
         this.mcpName,
@@ -125,14 +138,17 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    this.ensureEnabled()
     await this.callbacks.onRedirect(authorizationUrl)
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.ensureEnabled()
     await Effect.runPromise(this.auth.updateCodeVerifier(this.mcpName, codeVerifier))
   }
 
   async codeVerifier(): Promise<string> {
+    this.ensureEnabled()
     const entry = await Effect.runPromise(this.auth.get(this.mcpName))
     if (!entry?.codeVerifier) {
       throw new Error(`No code verifier saved for MCP server: ${this.mcpName}`)
@@ -141,10 +157,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveState(state: string): Promise<void> {
+    this.ensureEnabled()
     await Effect.runPromise(this.auth.updateOAuthState(this.mcpName, state))
   }
 
   async state(): Promise<string> {
+    this.ensureEnabled()
     const entry = await Effect.runPromise(this.auth.get(this.mcpName))
     if (entry?.oauthState) {
       return entry.oauthState
@@ -162,6 +180,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
+    this.ensureEnabled()
     const entry = await Effect.runPromise(this.auth.get(this.mcpName))
     if (!entry) return
     switch (type) {
@@ -185,6 +204,7 @@ export class McpOAuthPendingProvider extends McpOAuthProvider {
   private pendingTokens?: OAuthTokens
 
   override async clientInformation(): Promise<OAuthClientInformation | undefined> {
+    this.ensureEnabled()
     if (!this.config.clientId) return this.pendingClientInfo
     return {
       client_id: this.config.clientId,
@@ -193,23 +213,28 @@ export class McpOAuthPendingProvider extends McpOAuthProvider {
   }
 
   override async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    this.ensureEnabled()
     this.pendingClientInfo = info
   }
 
   override async tokens(): Promise<OAuthTokens | undefined> {
+    this.ensureEnabled()
     return this.pendingTokens
   }
 
   override async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.ensureEnabled()
     this.pendingTokens = tokens
   }
 
   override async invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
+    this.ensureEnabled()
     if (type === "all" || type === "client") this.pendingClientInfo = undefined
     if (type === "all" || type === "tokens") this.pendingTokens = undefined
   }
 
   async commit(): Promise<void> {
+    this.ensureEnabled()
     if (!this.pendingTokens) return
     await Effect.runPromise(
       this.auth.set(

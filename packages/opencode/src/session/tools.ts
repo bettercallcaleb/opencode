@@ -23,6 +23,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -398,6 +399,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     item.execute = (args, opts) =>
       run.promise(
         Effect.gen(function* () {
+          if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
           const ctx = context(args, opts)
           yield* plugin.trigger(
             "tool.execute.before",

@@ -43,6 +43,7 @@ import { UsageService } from "./usage"
 import { ACPProfile } from "./profile"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { Provider } from "@/provider/provider"
 import type { Command } from "@/command"
 
@@ -954,6 +955,7 @@ function registerMcpServers(
   sessionId: string,
   servers: readonly McpServer[],
 ) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return Effect.void
   const started = performance.now()
   const current = registered.get(sessionId) ?? new Set<string>()
   registered.set(sessionId, current)

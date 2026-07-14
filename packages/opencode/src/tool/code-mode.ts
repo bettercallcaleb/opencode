@@ -8,6 +8,7 @@ import { Agent } from "@/agent/agent"
 import { Session } from "@/session/session"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export const CODE_MODE_TOOL = "execute"
 
@@ -138,6 +139,7 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
   callID: string
   ctx: Tool.Context
 }) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Error(MCP.ENTERPRISE_DISABLED_MESSAGE)
   yield* input.plugin.trigger(
     "tool.execute.before",
     { tool: input.entry.key, sessionID: input.ctx.sessionID, callID: input.callID },

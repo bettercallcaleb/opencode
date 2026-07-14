@@ -1,6 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Context, Effect, Layer } from "effect"
 import open from "open"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export interface Interface {
   readonly open: (url: string) => Effect.Effect<void, Error>
@@ -12,6 +13,7 @@ const layer = Layer.succeed(
   Service,
   Service.of({
     open: Effect.fn("McpBrowser.open")(function* (url: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* Effect.fail(new Error("MCP is disabled in enterprise mode"))
       const subprocess = yield* Effect.tryPromise({
         try: () => open(url),
         catch: (error) => (error instanceof Error ? error : new Error(String(error))),
