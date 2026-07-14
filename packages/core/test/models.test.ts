@@ -112,6 +112,23 @@ const writeCache = (data: object, mtimeMs?: number) => writeCacheText(JSON.strin
 const provided = <A, E>(state: Ref.Ref<MockState>, eff: Effect.Effect<A, E, ModelsDev.Service>) =>
   eff.pipe(Effect.provide(buildLayer(state)))
 
+const providedWithFetchEnabled = <A, E>(state: Ref.Ref<MockState>, eff: Effect.Effect<A, E, ModelsDev.Service>) =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(buildLayer(state))
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_DISABLE_MODELS_FETCH
+        Flag.OPENCODE_DISABLE_MODELS_FETCH = false
+        return original
+      }),
+      () => eff.pipe(Effect.provide(context)),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_DISABLE_MODELS_FETCH = original
+        }),
+    )
+  })
+
 beforeEach(async () => {
   await rm(cacheFile, { force: true })
 })
@@ -217,7 +234,7 @@ describe("ModelsDev Service", () => {
     Effect.gen(function* () {
       yield* writeCache(fixture)
       const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
-      const result = yield* provided(
+      const result = yield* providedWithFetchEnabled(
         state,
         Effect.gen(function* () {
           const svc = yield* ModelsDev.Service
@@ -250,12 +267,38 @@ describe("ModelsDev Service", () => {
     }),
   )
 
+  it.live("refresh(false) does not fetch when model fetching is disabled", () =>
+    Effect.gen(function* () {
+      yield* writeCache(fixture, Date.now() - 10 * 60 * 1000)
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
+      yield* provided(
+        state,
+        ModelsDev.Service.use((s) => s.refresh(false)),
+      )
+      const final = yield* Ref.get(state)
+      expect(final.calls).toEqual([])
+    }),
+  )
+
+  it.live("refresh(true) does not fetch when model fetching is disabled", () =>
+    Effect.gen(function* () {
+      yield* writeCache(fixture)
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
+      yield* provided(
+        state,
+        ModelsDev.Service.use((s) => s.refresh(true)),
+      )
+      const final = yield* Ref.get(state)
+      expect(final.calls).toEqual([])
+    }),
+  )
+
   it.live("refresh(false) fetches when on-disk file is stale", () =>
     Effect.gen(function* () {
       // Stale: mtime 10 minutes ago, beyond the 5-minute TTL.
       yield* writeCache(fixture, Date.now() - 10 * 60 * 1000)
       const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
-      const after = yield* provided(
+      const after = yield* providedWithFetchEnabled(
         state,
         Effect.gen(function* () {
           const svc = yield* ModelsDev.Service
@@ -273,7 +316,7 @@ describe("ModelsDev Service", () => {
     Effect.gen(function* () {
       yield* writeCache(fixture)
       const state = yield* Ref.make({ ...initialState, status: 500, body: "boom" })
-      const result = yield* provided(
+      const result = yield* providedWithFetchEnabled(
         state,
         Effect.gen(function* () {
           const svc = yield* ModelsDev.Service
