@@ -14,6 +14,7 @@ import semver from "semver"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { NpmConfig } from "@opencode-ai/core/npm-config"
 import { InstallationEvent } from "@opencode-ai/schema/installation-event"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export type Method = "curl" | "npm" | "yarn" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
 
@@ -57,6 +58,13 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
 }) {
   override get message() {
     return this.stderr
+  }
+}
+
+export class EnterpriseModeError extends Error {
+  constructor() {
+    super("OpenCode self-update is disabled in enterprise mode")
+    this.name = "EnterpriseModeError"
   }
 }
 
@@ -206,6 +214,7 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
         return "unknown" as Method
       }),
       latest: Effect.fn("Installation.latest")(function* (installMethod?: Method) {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* Effect.die(new EnterpriseModeError())
         const detectedMethod = installMethod || (yield* result.method())
 
         if (detectedMethod === "brew") {
@@ -263,6 +272,7 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
         return data.tag_name.replace(/^v/, "")
       }, Effect.orDie),
       upgrade: Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* Effect.die(new EnterpriseModeError())
         let upgradeResult: { code: number; stdout: string; stderr: string } | undefined
         switch (m) {
           case "curl":

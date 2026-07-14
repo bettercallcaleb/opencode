@@ -3,6 +3,7 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "../../installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export const UpgradeCommand = {
   command: "upgrade [target]",
@@ -21,6 +22,7 @@ export const UpgradeCommand = {
       })
   },
   handler: async (args: { target?: string; method?: string }) => {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) throw new Installation.EnterpriseModeError()
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()

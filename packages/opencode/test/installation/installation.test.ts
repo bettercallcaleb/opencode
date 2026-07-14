@@ -2,13 +2,14 @@ import { describe, expect } from "bun:test"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Effect, Layer, Stream } from "effect"
+import { Cause, Effect, Layer, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { Installation } from "../../src/installation"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const encoder = new TextEncoder()
 
@@ -66,8 +67,49 @@ function testLayer(
   ])
 }
 
+const withEnterpriseMode = <A, E, R>(enabled: boolean, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      Flag.OPENCODE_ENTERPRISE_MODE = enabled
+      return original
+    }),
+    () => effect,
+    (original) =>
+      Effect.sync(() => {
+        Flag.OPENCODE_ENTERPRISE_MODE = original
+      }),
+  )
+
 describe("installation", () => {
   describe("latest", () => {
+    const enterpriseHttpCalls: string[] = []
+    const enterpriseProcessCalls: string[] = []
+    testEffect(
+      testLayer(
+        (request) => {
+          enterpriseHttpCalls.push(request.url)
+          return jsonResponse({ version: "1.2.3" })
+        },
+        (cmd) => {
+          enterpriseProcessCalls.push(cmd)
+          return ""
+        },
+      ),
+    ).effect("blocks version lookup in enterprise mode", () =>
+      Effect.gen(function* () {
+        enterpriseHttpCalls.length = 0
+        enterpriseProcessCalls.length = 0
+        const error = yield* withEnterpriseMode(
+          true,
+          Installation.use.latest("npm").pipe(Effect.catchCause((cause) => Effect.succeed(Cause.squash(cause)))),
+        )
+        expect(error).toBeInstanceOf(Installation.EnterpriseModeError)
+        expect(enterpriseHttpCalls).toEqual([])
+        expect(enterpriseProcessCalls).toEqual([])
+      }),
+    )
+
     testEffect(testLayer(() => jsonResponse({ tag_name: "v1.2.3" }))).effect(
       "reads release version from GitHub releases",
       () =>
@@ -182,6 +224,35 @@ describe("installation", () => {
   })
 
   describe("upgrade", () => {
+    const enterpriseHttpCalls: string[] = []
+    const enterpriseProcessCalls: string[] = []
+    testEffect(
+      testLayer(
+        (request) => {
+          enterpriseHttpCalls.push(request.url)
+          return new Response("install script", { status: 200 })
+        },
+        (cmd) => {
+          enterpriseProcessCalls.push(cmd)
+          return ""
+        },
+      ),
+    ).effect("blocks the installation boundary in enterprise mode", () =>
+      Effect.gen(function* () {
+        enterpriseHttpCalls.length = 0
+        enterpriseProcessCalls.length = 0
+        const error = yield* withEnterpriseMode(
+          true,
+          Installation.use.upgrade("curl", "9.9.9").pipe(
+            Effect.catchCause((cause) => Effect.succeed(Cause.squash(cause))),
+          ),
+        )
+        expect(error).toBeInstanceOf(Installation.EnterpriseModeError)
+        expect(enterpriseHttpCalls).toEqual([])
+        expect(enterpriseProcessCalls).toEqual([])
+      }),
+    )
+
     testEffect(
       testLayer(
         () => jsonResponse({}),
