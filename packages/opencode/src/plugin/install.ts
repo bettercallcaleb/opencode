@@ -12,6 +12,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Filesystem } from "@/util/filesystem"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { isRecord } from "@/util/record"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 import { parsePluginSpecifier, readPackageThemes, readPluginPackage, resolvePluginTarget } from "./shared"
 
@@ -257,6 +258,9 @@ function patchPluginList(
 }
 
 export async function installPlugin(spec: string, dep: InstallDeps = defaultInstallDeps): Promise<InstallResult> {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) {
+    return { ok: false, code: "install_failed", error: new Error("External plugins are disabled in enterprise mode") }
+  }
   const target = await dep.resolve(spec).then(
     (item) => ({
       ok: true as const,

@@ -11,6 +11,7 @@ import {
 import { ConfigPlugin } from "@/config/plugin"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export namespace PluginLoader {
   // A normalized plugin declaration derived from config before any filesystem or npm work happens.
@@ -206,6 +207,7 @@ export namespace PluginLoader {
   // once after the caller finishes preparing dependencies. Once dynamic import runs, failures are
   // treated as permanent for this process because Bun caches failed module resolution.
   export async function loadExternal<R = Loaded>(input: Input<R>): Promise<R[]> {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return []
     const candidates = input.items.map((origin) => ({ origin, plan: plan(origin.spec) }))
     const list: Array<Promise<AttemptResult<R>>> = []
     for (const candidate of candidates) {

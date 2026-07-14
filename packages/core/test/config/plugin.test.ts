@@ -12,11 +12,45 @@ import { PluginHost } from "@opencode-ai/core/plugin/host"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "../plugin/fixture"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(PluginTestLayer)
 const decode = Schema.decodeUnknownSync(Config.Info)
 
 describe("ConfigExternalPlugin", () => {
+  it.live("does not enumerate configured external plugins in enterprise mode", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const plugins = yield* PluginV2.Service
+          const host = yield* PluginHost.make(plugins)
+          let entries = 0
+          yield* ConfigExternalPlugin.Plugin.effect(host).pipe(
+            Effect.provideService(
+              Config.Service,
+              Config.Service.of({
+                entries: () =>
+                  Effect.sync(() => {
+                    entries++
+                    return []
+                  }),
+              }),
+            ),
+          )
+          expect(entries).toBe(0)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.live("resolves and loads a configured Promise plugin with options", () =>
     Effect.gen(function* () {
       const plugins = yield* PluginV2.Service

@@ -846,6 +846,7 @@ function installDetail(err: unknown) {
 }
 
 async function addPluginBySpec(state: RuntimeState | undefined, raw: string) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return false
   if (!state) return false
   const spec = raw.trim()
   if (!spec) return false
@@ -893,6 +894,9 @@ async function installPluginBySpec(
   raw: string,
   global = false,
 ): Promise<TuiPluginInstallResult> {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) {
+    return { ok: false, message: "External plugins are disabled in enterprise mode" }
+  }
   if (!state) {
     return {
       ok: false,
@@ -1085,7 +1089,9 @@ async function load(input: {
         return yield* RuntimeFlags.Service
       }).pipe(Effect.provide(AppNodeBuilder.build(RuntimeFlags.node))),
     )
-    const pluginOrigins = config.plugin_origins ?? (await TuiConfig.pluginOrigins())
+    const pluginOrigins = Flag.OPENCODE_ENTERPRISE_MODE
+      ? []
+      : (config.plugin_origins ?? (await TuiConfig.pluginOrigins()))
     const records = Flag.OPENCODE_PURE ? [] : pluginOrigins
     if (Flag.OPENCODE_PURE && pluginOrigins.length) {
     }

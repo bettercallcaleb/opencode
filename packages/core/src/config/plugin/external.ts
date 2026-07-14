@@ -11,6 +11,7 @@ import { Location } from "../../location"
 import { Npm } from "../../npm"
 import { define } from "../../plugin/internal"
 import { PluginPromise } from "../../plugin/promise"
+import { Flag } from "../../flag/flag"
 
 const PluginModule = Schema.Struct({
   default: Schema.Union([
@@ -32,6 +33,7 @@ const PluginModule = Schema.Struct({
 export const Plugin = define({
   id: "config-plugin",
   effect: Effect.fn(function* (ctx) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return
     const config = yield* Config.Service
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service

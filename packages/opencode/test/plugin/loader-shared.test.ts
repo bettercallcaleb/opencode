@@ -9,6 +9,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@/config/config"
 import { disposeAllInstances, provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const { Plugin } = await import("../../src/plugin/index")
 const { PluginLoader } = await import("../../src/plugin/loader")
@@ -36,7 +37,11 @@ function withTmp<T, A, E, R>(
   })
 }
 
-function load(dir: string, flags?: Parameters<typeof RuntimeFlags.layer>[0]) {
+function load(
+  dir: string,
+  flags?: Parameters<typeof RuntimeFlags.layer>[0],
+  waitForDependencies: Config.Interface["waitForDependencies"] = () => Effect.void,
+) {
   const source = path.join(dir, "opencode.json")
   return Effect.gen(function* () {
     const config = yield* Effect.promise(
@@ -45,7 +50,7 @@ function load(dir: string, flags?: Parameters<typeof RuntimeFlags.layer>[0]) {
     const plugins = config.plugin ?? []
     return yield* Effect.gen(function* () {
       const plugin = yield* Plugin.Service
-      yield* plugin.list()
+      return yield* plugin.list()
     }).pipe(
       Effect.provide(
         LayerNode.compile(Plugin.node, [
@@ -58,6 +63,7 @@ function load(dir: string, flags?: Parameters<typeof RuntimeFlags.layer>[0]) {
                   plugin_origins: plugins.map((plugin) => ({ spec: plugin, source, scope: "local" as const })),
                 }),
               directories: () => Effect.succeed([dir]),
+              waitForDependencies,
             }),
           ],
           [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true, ...flags })],
@@ -69,6 +75,42 @@ function load(dir: string, flags?: Parameters<typeof RuntimeFlags.layer>[0]) {
 }
 
 describe("plugin.loader.shared", () => {
+  it.live("keeps internal server plugins while skipping external preparation in enterprise mode", () =>
+    withTmp(
+      async (dir) => {
+        const file = path.join(dir, "plugin.ts")
+        const mark = path.join(dir, "called.txt")
+        await Bun.write(file, `export default async () => { await Bun.write(${JSON.stringify(mark)}, "called"); return {} }\n`)
+        await Bun.write(path.join(dir, "opencode.json"), JSON.stringify({ plugin: [pathToFileURL(file).href] }))
+        return { mark }
+      },
+      (tmp) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const original = Flag.OPENCODE_ENTERPRISE_MODE
+            Flag.OPENCODE_ENTERPRISE_MODE = true
+            return original
+          }),
+          () =>
+            Effect.gen(function* () {
+              let waits = 0
+              const hooks = yield* load(tmp.path, { disableDefaultPlugins: false }, () =>
+                Effect.sync(() => {
+                  waits++
+                }),
+              )
+              expect(hooks.length).toBeGreaterThan(0)
+              expect(waits).toBe(0)
+              expect(yield* Effect.promise(() => fs.stat(tmp.extra.mark).then(() => true, () => false))).toBe(false)
+            }),
+          (original) =>
+            Effect.sync(() => {
+              Flag.OPENCODE_ENTERPRISE_MODE = original
+            }),
+        ),
+    ),
+  )
+
   it.live("loads a file:// plugin function export", () =>
     withTmp(
       async (dir) => {
