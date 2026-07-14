@@ -12,6 +12,7 @@ import path from "path"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Effect, Schema } from "effect"
 import type { InstanceContext } from "@/project/instance-context"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const decodeMessageInfo = Schema.decodeUnknownSync(SessionV1.Info)
 const decodePart = Schema.decodeUnknownSync(SessionV1.Part)
@@ -80,6 +81,30 @@ export function transformShareData(shareData: ShareData[]): {
 
 type ExportData = { info: SDKSession; messages: Array<{ info: Message; parts: Part[] }> }
 
+export function isRemoteImport(file: string) {
+  return /^https?:\/\//i.test(file)
+}
+
+export const ensureImportSourceAllowed = Effect.fn("Cli.import.ensureSourceAllowed")(function* (file: string) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE && isRemoteImport(file)) {
+    return yield* new CliError({ message: "Remote session import is disabled in enterprise mode" })
+  }
+})
+
+export const fetchRemoteImport = (url: string, headers: HeadersInit) =>
+  Effect.suspend(() => {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) {
+      return Effect.fail(new CliError({ message: "Remote session import is disabled in enterprise mode" }))
+    }
+    return Effect.tryPromise({
+      try: () => fetch(url, { headers }),
+      catch: (e) =>
+        new CliError({
+          message: `Failed to fetch share data: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    })
+  })
+
 export const ImportCommand = effectCmd({
   command: "import <file>",
   describe: "import session data from JSON file or URL",
@@ -96,14 +121,15 @@ export const ImportCommand = effectCmd({
   }),
 })
 
-const runImport = Effect.fn("Cli.import.body")(function* (file: string, ctx: InstanceContext) {
+export const runImport = Effect.fn("Cli.import.body")(function* (file: string, ctx: InstanceContext) {
+  yield* ensureImportSourceAllowed(file)
   const share = yield* ShareNext.Service
   const fs = yield* FSUtil.Service
   const { db } = yield* Database.Service
 
   let exportData: ExportData | undefined
 
-  const isUrl = file.startsWith("http://") || file.startsWith("https://")
+  const isUrl = isRemoteImport(file)
 
   if (isUrl) {
     const slug = parseShareUrl(file)
@@ -118,20 +144,11 @@ const runImport = Effect.fn("Cli.import.body")(function* (file: string, ctx: Ins
     const req = yield* Effect.orDie(share.request())
     const headers = shouldAttachShareAuthHeaders(file, req.baseUrl) ? req.headers : {}
 
-    const tryFetch = (url: string) =>
-      Effect.tryPromise({
-        try: () => fetch(url, { headers }),
-        catch: (e) =>
-          new CliError({
-            message: `Failed to fetch share data: ${e instanceof Error ? e.message : String(e)}`,
-          }),
-      })
-
     const dataPath = req.api.data(slug)
-    let response = yield* tryFetch(`${baseUrl}${dataPath}`)
+    let response = yield* fetchRemoteImport(`${baseUrl}${dataPath}`, headers)
 
     if (!response.ok && dataPath !== `/api/share/${slug}/data`) {
-      response = yield* tryFetch(`${baseUrl}/api/share/${slug}/data`)
+      response = yield* fetchRemoteImport(`${baseUrl}/api/share/${slug}/data`, headers)
     }
 
     if (!response.ok) {

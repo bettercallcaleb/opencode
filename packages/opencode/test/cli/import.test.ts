@@ -1,10 +1,122 @@
 import { test, expect } from "bun:test"
+import { Effect } from "effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import {
+  ensureImportSourceAllowed,
+  fetchRemoteImport,
+  isRemoteImport,
   parseShareUrl,
   shouldAttachShareAuthHeaders,
   transformShareData,
   type ShareData,
 } from "../../src/cli/cmd/import"
+
+async function withImportGlobals<A>(enterprise: boolean, replacement: typeof fetch, fn: () => Promise<A>) {
+  const originalEnterprise = Flag.OPENCODE_ENTERPRISE_MODE
+  const originalFetch = globalThis.fetch
+  Flag.OPENCODE_ENTERPRISE_MODE = enterprise
+  globalThis.fetch = replacement
+  try {
+    return await fn()
+  } finally {
+    Flag.OPENCODE_ENTERPRISE_MODE = originalEnterprise
+    globalThis.fetch = originalFetch
+  }
+}
+
+function fetchRecorder(calls: string[]) {
+  return (async (input: string | URL | Request) => {
+    calls.push(input.toString())
+    return new Response("[]", { status: 200 })
+  }) as typeof fetch
+}
+
+test("recognizes remote import schemes case-insensitively without matching local paths", () => {
+  expect(isRemoteImport("HTTPS://example.com/session")).toBe(true)
+  expect(isRemoteImport("Http://example.com/session")).toBe(true)
+  expect(isRemoteImport("hTtPs://example.com/session")).toBe(true)
+  expect(isRemoteImport("./HTTPS-session.json")).toBe(false)
+  expect(isRemoteImport("session-https://example.com.json")).toBe(false)
+})
+
+test("enterprise mode rejects mixed-case remote schemes before fetch", async () => {
+  const calls: string[] = []
+  await withImportGlobals(true, fetchRecorder(calls), async () => {
+    for (const url of [
+      "HTTPS://example.com/session",
+      "Http://example.com/session",
+      "hTtPs://example.com/session",
+    ]) {
+      await expect(Effect.runPromise(ensureImportSourceAllowed(url))).rejects.toThrow(
+        "Remote session import is disabled in enterprise mode",
+      )
+    }
+  })
+  expect(calls).toEqual([])
+})
+
+test("enterprise mode rejects https imports before fetch", async () => {
+  const calls: string[] = []
+  await withImportGlobals(true, fetchRecorder(calls), async () => {
+    await expect(Effect.runPromise(ensureImportSourceAllowed("https://example.com/share/test"))).rejects.toThrow(
+      "Remote session import is disabled in enterprise mode",
+    )
+  })
+  expect(calls).toEqual([])
+})
+
+test("enterprise mode rejects http imports before fetch", async () => {
+  const calls: string[] = []
+  await withImportGlobals(true, fetchRecorder(calls), async () => {
+    await expect(Effect.runPromise(ensureImportSourceAllowed("http://example.com/share/test"))).rejects.toThrow(
+      "Remote session import is disabled in enterprise mode",
+    )
+  })
+  expect(calls).toEqual([])
+})
+
+test("enterprise mode also blocks the remote fetch boundary", async () => {
+  const calls: string[] = []
+  await withImportGlobals(true, fetchRecorder(calls), async () => {
+    await expect(Effect.runPromise(fetchRemoteImport("https://example.com/share/test", {}))).rejects.toThrow(
+      "Remote session import is disabled in enterprise mode",
+    )
+  })
+  expect(calls).toEqual([])
+})
+
+test("enterprise mode leaves local file imports reachable", async () => {
+  const calls: string[] = []
+  await withImportGlobals(true, fetchRecorder(calls), async () => {
+    expect(isRemoteImport("./session.json")).toBe(false)
+    await Effect.runPromise(ensureImportSourceAllowed("./session.json"))
+  })
+  expect(calls).toEqual([])
+})
+
+test("non-enterprise remote import remains reachable", async () => {
+  const originalEnterprise = Flag.OPENCODE_ENTERPRISE_MODE
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  await withImportGlobals(false, fetchRecorder(calls), async () => {
+    await Effect.runPromise(fetchRemoteImport("https://example.com/share/test", {}))
+  })
+  expect(calls).toEqual(["https://example.com/share/test"])
+  expect(Flag.OPENCODE_ENTERPRISE_MODE).toBe(originalEnterprise)
+  expect(globalThis.fetch).toBe(originalFetch)
+})
+
+test("import globals are restored when the operation fails", async () => {
+  const originalEnterprise = Flag.OPENCODE_ENTERPRISE_MODE
+  const originalFetch = globalThis.fetch
+  await expect(
+    withImportGlobals(!originalEnterprise, fetchRecorder([]), async () => {
+      throw new Error("expected failure")
+    }),
+  ).rejects.toThrow("expected failure")
+  expect(Flag.OPENCODE_ENTERPRISE_MODE).toBe(originalEnterprise)
+  expect(globalThis.fetch).toBe(originalFetch)
+})
 
 // parseShareUrl tests
 test("parses valid share URLs", () => {
