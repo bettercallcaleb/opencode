@@ -1,5 +1,6 @@
 import { Config, ConfigProvider, Context, Effect, Layer, Option } from "effect"
 import { ConfigService } from "@/effect/config-service"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const bool = (name: string) => Config.boolean(name).pipe(Config.withDefault(false))
 const positiveInteger = (name: string) =>
@@ -19,7 +20,9 @@ export class Service extends ConfigService.Service<Service>()("@opencode/Runtime
   disableDefaultPlugins: bool("OPENCODE_DISABLE_DEFAULT_PLUGINS"),
   disableEmbeddedWebUi: bool("OPENCODE_DISABLE_EMBEDDED_WEB_UI"),
   disableExternalSkills: bool("OPENCODE_DISABLE_EXTERNAL_SKILLS"),
-  disableLspDownload: bool("OPENCODE_DISABLE_LSP_DOWNLOAD"),
+  disableLspDownload: bool("OPENCODE_DISABLE_LSP_DOWNLOAD").pipe(
+    Config.map((disabled) => disabled || Flag.OPENCODE_ENTERPRISE_MODE),
+  ),
   disableClaudeCodePrompt: Config.all({
     broad: bool("OPENCODE_DISABLE_CLAUDE_CODE"),
     direct: bool("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"),
@@ -68,7 +71,12 @@ export const layer = (overrides: Partial<Info> = {}) =>
     Service,
     Effect.gen(function* () {
       const flags = yield* Service
-      return Service.of({ ...flags, ...overrides })
+      return Service.of({
+        ...flags,
+        ...overrides,
+        disableLspDownload:
+          Flag.OPENCODE_ENTERPRISE_MODE || overrides.disableLspDownload || flags.disableLspDownload,
+      })
     }),
   ).pipe(Layer.provide(emptyConfigLayer))
 

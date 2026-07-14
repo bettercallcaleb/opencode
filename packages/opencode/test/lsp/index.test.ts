@@ -1,4 +1,4 @@
-import { describe, expect, spyOn } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Deferred, Effect, Layer } from "effect"
@@ -10,6 +10,7 @@ import * as LSPServer from "@/lsp/server"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { TestInstance } from "../fixture/fixture"
 import { awaitWithTimeout, testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const lspLayer = (flags: Parameters<typeof RuntimeFlags.layer>[0] = {}) =>
   LayerNode.compile(LayerNode.group([LSP.node, Config.node, RuntimeFlags.node, EventV2Bridge.node]), [
@@ -24,6 +25,20 @@ const fakeServerPath = path.join(__dirname, "../fixture/lsp/fake-lsp-server.js")
 const disabledDownloadIt = testEffect(
   Layer.mergeAll(lspLayer({ disableLspDownload: true }), LayerNode.compile(CrossSpawnSpawner.node)),
 )
+
+test("enterprise mode overrides an explicit LSP download enable", async () => {
+  const original = Flag.OPENCODE_ENTERPRISE_MODE
+  try {
+    Flag.OPENCODE_ENTERPRISE_MODE = true
+    const flags = await RuntimeFlags.Service.pipe(
+      Effect.provide(RuntimeFlags.layer({ disableLspDownload: false })),
+      Effect.runPromise,
+    )
+    expect(flags.disableLspDownload).toBe(true)
+  } finally {
+    Flag.OPENCODE_ENTERPRISE_MODE = original
+  }
+})
 
 describe("lsp.spawn", () => {
   it.instance(

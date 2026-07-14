@@ -9,6 +9,7 @@ import { httpClient } from "../effect/app-node-platform"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { which } from "../util/which"
+import { Flag } from "../flag/flag"
 
 export namespace RipgrepBinary {
   const VERSION = "15.1.0"
@@ -96,6 +97,9 @@ export namespace RipgrepBinary {
 
             const target = path.join(Global.Path.bin, `rg${process.platform === "win32" ? ".exe" : ""}`)
             if (yield* fs.isFile(target).pipe(Effect.orDie)) return target
+            if (Flag.OPENCODE_ENTERPRISE_MODE) {
+              throw new Error("Runtime tooling installation is disabled in enterprise mode")
+            }
 
             const platformKey = `${process.arch}-${process.platform}` as keyof typeof PLATFORM
             const config = PLATFORM[platformKey]

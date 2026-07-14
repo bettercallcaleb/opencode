@@ -7,8 +7,25 @@ import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { RelativePath } from "@opencode-ai/core/schema"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
+import { RipgrepBinary } from "@opencode-ai/core/ripgrep/binary"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(LayerNode.compile(Ripgrep.node))
+const binaryIt = testEffect(LayerNode.compile(RipgrepBinary.node))
+
+binaryIt.live("uses an existing ripgrep binary in enterprise mode", () =>
+  Effect.gen(function* () {
+    const original = Flag.OPENCODE_ENTERPRISE_MODE
+    Flag.OPENCODE_ENTERPRISE_MODE = true
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        Flag.OPENCODE_ENTERPRISE_MODE = original
+      }),
+    )
+
+    expect(yield* (yield* RipgrepBinary.Service).filepath).toContain("rg")
+  }),
+)
 
 describe("Ripgrep", () => {
   it.live("keeps ignored files out of catch-all find results", () =>

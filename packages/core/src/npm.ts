@@ -48,6 +48,7 @@ export interface Interface {
     },
   ) => Effect.Effect<void, EffectFlock.LockError | InstallFailedError | RuntimeInstallDisabledError>
   readonly which: (pkg: string, bin?: string) => Effect.Effect<string | undefined>
+  readonly whichCached?: (pkg: string, bin?: string) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Npm") {}
@@ -202,7 +203,7 @@ const layer = Layer.effect(
       return
     }, Effect.scoped)
 
-    const which = Effect.fn("Npm.which")(function* (pkg: string, bin?: string) {
+    const whichCached = Effect.fn("Npm.whichCached")(function* (pkg: string, bin?: string) {
       const dir = directory(pkg)
       const binDir = path.join(dir, "node_modules", ".bin")
 
@@ -232,33 +233,30 @@ const layer = Layer.effect(
         return Option.some(files[0])
       })
 
-      return Option.getOrUndefined(
-        yield* Effect.gen(function* () {
-          const bin = yield* pick()
-          if (Option.isSome(bin)) {
-            return Option.some(path.join(binDir, bin.value))
-          }
+      return Option.map(yield* pick(), (name) => path.join(binDir, name)).pipe(Option.getOrUndefined)
+    })
 
-          if (Flag.OPENCODE_ENTERPRISE_MODE) return Option.none<string>()
+    const which = Effect.fn("Npm.which")(function* (pkg: string, bin?: string) {
+      return yield* Effect.gen(function* () {
+        const cached = yield* whichCached(pkg, bin)
+        if (cached) return cached
 
-          yield* fs.remove(path.join(dir, "package-lock.json")).pipe(Effect.orElseSucceed(() => {}))
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return
 
-          yield* add(pkg)
+        const dir = directory(pkg)
+        yield* fs.remove(path.join(dir, "package-lock.json")).pipe(Effect.orElseSucceed(() => {}))
 
-          const resolved = yield* pick()
-          if (Option.isNone(resolved)) return Option.none<string>()
-          return Option.some(path.join(binDir, resolved.value))
-        }).pipe(
-          Effect.scoped,
-          Effect.orElseSucceed(() => Option.none<string>()),
-        ),
-      )
+        yield* add(pkg)
+
+        return yield* whichCached(pkg, bin)
+      }).pipe(Effect.scoped, Effect.orElseSucceed(() => undefined))
     })
 
     return Service.of({
       add,
       install,
       which,
+      whichCached,
     })
   }),
 )
@@ -281,4 +279,8 @@ export async function add(...args: Parameters<Interface["add"]>) {
 
 export async function which(...args: Parameters<Interface["which"]>) {
   return runPromise((svc) => svc.which(...args))
+}
+
+export async function whichCached(...args: Parameters<NonNullable<Interface["whichCached"]>>) {
+  return runPromise((svc) => svc.whichCached!(...args))
 }

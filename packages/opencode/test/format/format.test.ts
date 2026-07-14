@@ -7,6 +7,7 @@ import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../../src/format"
 import * as Formatter from "../../src/format/formatter"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(
   Layer.mergeAll(LayerNode.compile(LayerNode.group([Format.node, CrossSpawnSpawner.node])), NodeFileSystem.layer),
@@ -128,6 +129,41 @@ describe("Format", () => {
       expect(a).toEqual([])
       expect(b.find((item) => item.name === "gofmt")).toBeDefined()
     }),
+  )
+
+  it.instance(
+    "enterprise mode keeps configured local formatter commands usable",
+    () =>
+      Effect.gen(function* () {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            Flag.OPENCODE_ENTERPRISE_MODE = original
+          }),
+        )
+
+        const test = yield* TestInstance
+        const file = `${test.directory}/test.enterprise-local`
+        yield* Effect.promise(() => Bun.write(file, "before"))
+        expect(yield* Format.use.file(file)).toBe(true)
+        expect(yield* Effect.promise(() => Bun.file(file).text())).toBe("local")
+      }),
+    {
+      config: {
+        formatter: {
+          local: {
+            command: [
+              process.execPath,
+              "-e",
+              "require('fs').writeFileSync(process.argv[1], 'local')",
+              "$FILE",
+            ],
+            extensions: [".enterprise-local"],
+          },
+        },
+      },
+    },
   )
 
   it.instance(

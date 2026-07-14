@@ -207,6 +207,27 @@ describe("Npm.install", () => {
 })
 
 describe("Npm.which", () => {
+  test("cache-only lookup never installs or removes a lockfile", async () => {
+    await using tmp = await tmpdir()
+    const cache = path.join(tmp.path, "cache")
+    const dir = path.join(cache, "packages", "tooling-bin")
+    await fs.mkdir(dir, { recursive: true })
+    const lockfile = "preserve-tooling-lockfile"
+    await Bun.write(path.join(dir, "package-lock.json"), lockfile)
+    const load = spyOn(NpmConfig, "load")
+    try {
+      const result = await runNpm(
+        cache,
+        Npm.Service.use((npm) => npm.whichCached!("tooling-bin")),
+      )
+      expect(result).toBeUndefined()
+      expect(await Bun.file(path.join(dir, "package-lock.json")).text()).toBe(lockfile)
+      expect(load).not.toHaveBeenCalled()
+    } finally {
+      load.mockRestore()
+    }
+  })
+
   test("returns an existing cached binary in enterprise mode", async () => {
     await using tmp = await tmpdir()
     const cache = path.join(tmp.path, "cache")

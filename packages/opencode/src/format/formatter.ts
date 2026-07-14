@@ -3,6 +3,9 @@ import type { InstanceContext } from "../project/instance-context"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
 import { which } from "@opencode-ai/core/util/which"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+const npmWhich = (pkg: string) => (Flag.OPENCODE_ENTERPRISE_MODE ? Npm.whichCached(pkg) : Npm.which(pkg))
 
 export interface Context extends Pick<InstanceContext, "directory" | "worktree"> {
   experimentalOxfmt: boolean
@@ -76,7 +79,7 @@ export const prettier: Info = {
         devDependencies?: Record<string, string>
       }>(item)
       if (json.dependencies?.prettier || json.devDependencies?.prettier) {
-        const bin = await Npm.which("prettier")
+        const bin = await npmWhich("prettier")
         if (bin) return [bin, "--write", "$FILE"]
       }
     }
@@ -99,7 +102,7 @@ export const oxfmt: Info = {
         devDependencies?: Record<string, string>
       }>(item)
       if (json.dependencies?.oxfmt || json.devDependencies?.oxfmt) {
-        const bin = await Npm.which("oxfmt")
+        const bin = await npmWhich("oxfmt")
         if (bin) return [bin, "$FILE"]
       }
     }
@@ -145,7 +148,7 @@ export const biome: Info = {
     for (const config of configs) {
       const found = await Filesystem.findUp(config, context.directory, context.worktree)
       if (found.length > 0) {
-        const bin = await Npm.which("@biomejs/biome")
+        const bin = await npmWhich("@biomejs/biome")
         if (bin) return [bin, "format", "--write", "$FILE"]
       }
     }
