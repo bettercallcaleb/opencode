@@ -11,6 +11,7 @@ import { SkillV2 } from "@opencode-ai/core/skill"
 import { SkillDiscovery } from "@opencode-ai/core/skill/discovery"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const urls = new Map<string, AbsolutePath[]>()
 let pulls = 0
@@ -39,6 +40,86 @@ description: ${description}
 }
 
 describe("SkillV2", () => {
+  it.live("enterprise mode ignores URL sources while retaining embedded skills", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        pulls = 0
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const skill = yield* SkillV2.Service
+          yield* skill.transform((editor) => {
+            editor.source({ type: "url", url: "hTtPs://example.test/skills/" })
+            editor.source({
+              type: "embedded",
+              skill: SkillV2.Info.make({
+                name: "bundled",
+                location: AbsolutePath.make("/bundled/SKILL.md"),
+                content: "# Bundled",
+              }),
+            })
+          })
+
+          expect(yield* skill.sources()).toEqual([
+            {
+              type: "embedded",
+              skill: SkillV2.Info.make({
+                name: "bundled",
+                location: AbsolutePath.make("/bundled/SKILL.md"),
+                content: "# Bundled",
+              }),
+            },
+          ])
+          expect((yield* skill.list()).map((item) => item.name)).toEqual(["bundled"])
+          expect(pulls).toBe(0)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
+  it.live("enterprise mode does not expose skills cached from an earlier URL source", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const original = Flag.OPENCODE_ENTERPRISE_MODE
+            Flag.OPENCODE_ENTERPRISE_MODE = false
+            return original
+          }),
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.promise(async () => {
+                await fs.mkdir(path.join(tmp.path, "remote"), { recursive: true })
+                await write(tmp.path, "remote", "Remote cached skill")
+              })
+              const url = "https://example.test/cached/"
+              urls.set(url, [AbsolutePath.make(tmp.path)])
+              const skill = yield* SkillV2.Service
+              yield* skill.transform((editor) => editor.source({ type: "url", url }))
+              expect((yield* skill.list()).map((item) => item.name)).toEqual(["remote"])
+
+              Flag.OPENCODE_ENTERPRISE_MODE = true
+              expect(yield* skill.sources()).toEqual([])
+              expect(yield* skill.list()).toEqual([])
+            }),
+          (original) =>
+            Effect.sync(() => {
+              Flag.OPENCODE_ENTERPRISE_MODE = original
+            }),
+        ),
+      ),
+    ),
+  )
+
   it.live("registers sources and resolves later source precedence", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

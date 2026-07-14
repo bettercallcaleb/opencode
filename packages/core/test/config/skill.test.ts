@@ -10,11 +10,65 @@ import { SkillV2 } from "@opencode-ai/core/skill"
 import { location } from "../fixture/location"
 import { testEffect } from "../lib/effect"
 import { host } from "../plugin/host"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(Layer.empty)
 const decode = Schema.decodeUnknownSync(Config.Info)
 
 describe("ConfigSkillPlugin.Plugin", () => {
+  it.effect("enterprise mode excludes mixed-case URL sources while retaining local directories", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const sources: SkillV2.Source[] = []
+          const transform = Effect.fnUntraced(function* (update: (draft: SkillV2.Draft) => void | Effect.Effect<void>) {
+            const result = update({ source: (source) => sources.push(source), list: () => sources })
+            if (Effect.isEffect(result)) yield* result
+            return { dispose: Effect.void }
+          })
+          yield* ConfigSkillPlugin.Plugin.effect(
+            host({
+              skill: {
+                transform,
+                reload: () => Effect.void,
+              },
+            }),
+          ).pipe(
+            Effect.provideService(Global.Service, Global.Service.of({ ...Global.make(), home: "/home/test" })),
+            Effect.provideService(
+              Location.Service,
+              Location.Service.of(location({ directory: AbsolutePath.make("/repo") })),
+            ),
+            Effect.provideService(
+              Config.Service,
+              Config.Service.of({
+                entries: () =>
+                  Effect.succeed([
+                    new Config.Document({
+                      type: "document",
+                      info: decode({ skills: ["./local", "HTTP://example.test/one", "hTtPs://example.test/two"] }),
+                    }),
+                  ]),
+              }),
+            ),
+          )
+
+          expect(sources).toEqual([
+            SkillV2.DirectorySource.make({ type: "directory", path: AbsolutePath.make("/repo/local") }),
+          ])
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.effect("registers configured skill directories and URLs", () =>
     Effect.gen(function* () {
       const directory = AbsolutePath.make("/repo/packages/app")

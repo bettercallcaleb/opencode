@@ -14,6 +14,9 @@ import { Global } from "@opencode-ai/core/global"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
 
+export const REMOTE_CONTENT_DISABLED_MESSAGE = "Remote instructions and skills are disabled in enterprise mode"
+export const isRemoteInstruction = (value: string) => /^https?:\/\//i.test(value)
+
 function extract(messages: SessionV1.WithParts[]) {
   const paths = new Set<string>()
   for (const msg of messages) {
@@ -93,6 +96,7 @@ const layer: Layer.Layer<
     })
 
     const fetch = Effect.fnUntraced(function* (url: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return ""
       const res = yield* http.execute(HttpClientRequest.get(url)).pipe(
         Effect.timeout(5000),
         Effect.catch(() => Effect.succeed(null)),
@@ -134,7 +138,7 @@ const layer: Layer.Layer<
 
       if (config.instructions) {
         for (const raw of config.instructions) {
-          if (raw.startsWith("https://") || raw.startsWith("http://")) continue
+          if (isRemoteInstruction(raw)) continue
           const instruction = raw.startsWith("~/") ? path.join(global.home, raw.slice(2)) : raw
           const matches = yield* (
             path.isAbsolute(instruction)
@@ -155,9 +159,9 @@ const layer: Layer.Layer<
     const system = Effect.fn("Instruction.system")(function* () {
       const config = yield* cfg.get()
       const paths = yield* systemPaths()
-      const urls = (config.instructions ?? []).filter(
-        (item) => item.startsWith("https://") || item.startsWith("http://"),
-      )
+      const urls = Flag.OPENCODE_ENTERPRISE_MODE
+        ? []
+        : (config.instructions ?? []).filter(isRemoteInstruction)
 
       const files = yield* Effect.forEach(Array.from(paths), read, { concurrency: 8 })
       const remote = yield* Effect.forEach(urls, fetch, { concurrency: 4 })

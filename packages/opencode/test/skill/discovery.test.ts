@@ -8,6 +8,7 @@ import { Filesystem } from "@/util/filesystem"
 import { rm } from "fs/promises"
 import path from "path"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 let CLOUDFLARE_SKILLS_URL: string
 let server: ReturnType<typeof Bun.serve>
@@ -16,6 +17,7 @@ let mutableVersion = "1"
 let mutableContent = "# Old"
 let mutableDownloadCount = 0
 let mutableFiles = ["SKILL.md"]
+let requestCount = 0
 
 const fixturePath = path.join(import.meta.dir, "../fixture/skills")
 const cacheDir = path.join(Global.Path.cache, "skills")
@@ -27,6 +29,7 @@ beforeAll(async () => {
   server = Bun.serve({
     port: 0,
     async fetch(req) {
+      requestCount++
       const url = new URL(req.url)
 
       if (url.pathname === "/mutable/index.json") {
@@ -64,6 +67,28 @@ afterAll(async () => {
 })
 
 describe("Discovery.pull", () => {
+  it.live("enterprise mode ignores mixed-case remote sources without requests or cache mutations", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        requestCount = 0
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const discovery = yield* Discovery.Service
+          expect(yield* discovery.pull("hTtP://example.test/skills/")).toEqual([])
+          expect(requestCount).toBe(0)
+          expect(yield* Effect.promise(() => Bun.file(path.join(cacheDir, ".opencode-version")).exists())).toBe(false)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.live("downloads skills from cloudflare url", () =>
     Effect.gen(function* () {
       const fsys = yield* FSUtil.Service

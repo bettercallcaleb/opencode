@@ -9,10 +9,16 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Global } from "@opencode-ai/core/global"
 import { SkillDiscovery } from "@opencode-ai/core/skill/discovery"
 import { tmpdir } from "./fixture/tmpdir"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const base = "https://skills.example.test/catalog/"
 
-async function pull(skills: unknown[], files: Record<string, string> = {}, cache?: Awaited<ReturnType<typeof tmpdir>>) {
+async function pull(
+  skills: unknown[],
+  files: Record<string, string> = {},
+  cache?: Awaited<ReturnType<typeof tmpdir>>,
+  url = base,
+) {
   const tmp = cache ?? (await tmpdir())
   const requests: string[] = []
   const http = Layer.succeed(
@@ -35,13 +41,28 @@ async function pull(skills: unknown[], files: Record<string, string> = {}, cache
   ])
   const directories = await Effect.runPromise(
     Effect.gen(function* () {
-      return yield* (yield* SkillDiscovery.Service).pull(base)
+      return yield* (yield* SkillDiscovery.Service).pull(url)
     }).pipe(Effect.provide(skillDiscoveryLayer)),
   )
   return { tmp, requests, directories }
 }
 
 describe("SkillDiscovery.pull", () => {
+  test("enterprise mode ignores mixed-case remote sources without requests or cache mutations", async () => {
+    const original = Flag.OPENCODE_ENTERPRISE_MODE
+    const tmp = await tmpdir()
+    try {
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      const result = await pull([{ name: "cached", files: ["SKILL.md"] }], {}, tmp, "hTtPs://example.test/")
+      expect(result.directories).toEqual([])
+      expect(result.requests).toEqual([])
+      expect(await fs.readdir(tmp.path)).toEqual([])
+    } finally {
+      Flag.OPENCODE_ENTERPRISE_MODE = original
+      await tmp[Symbol.asyncDispose]()
+    }
+  })
+
   test("rejects skill name traversal without fetching files", async () => {
     const result = await pull([{ name: "../outside", files: ["SKILL.md"] }])
     try {

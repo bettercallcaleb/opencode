@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import path from "path"
 import { Effect, FileSystem, Layer } from "effect"
@@ -20,6 +20,8 @@ import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
 import { InstanceStore } from "@/project/instance-store"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Config } from "@/config/config"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([CrossSpawnSpawner.node, LayerNodePlatform.filesystem, InstanceStore.node]), [
@@ -206,10 +208,106 @@ describe("Instruction.resolve", () => {
     ),
   )
 
-  test.todo("fetches remote instructions from config URLs via HttpClient", () => {})
+  it.live("fetches remote instructions from config URLs outside enterprise mode", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = false
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const projectTmp = yield* tmpdirScoped()
+          const requests: string[] = []
+          const url = "https://example.test/instructions.md"
+          const client = HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests.push(request.url)
+              return HttpClientResponse.fromWeb(request, new Response("# Remote Instructions"))
+            }),
+          )
+          const layer = AppNodeBuilder.build(Instruction.node, [
+            [
+              Config.node,
+              Layer.succeed(
+                Config.Service,
+                TestConfig.make({ get: () => Effect.succeed({ instructions: [url] }) }),
+              ),
+            ],
+            [Global.node, Global.layerWith({ home: projectTmp, config: projectTmp })],
+            [RuntimeFlags.node, RuntimeFlags.layer()],
+            [LayerNodePlatform.httpClient, Layer.succeed(HttpClient.HttpClient, client)],
+          ])
+          const rules = yield* Effect.gen(function* () {
+            return yield* (yield* Instruction.Service).system()
+          }).pipe(provideInstance(projectTmp), Effect.provide(layer))
+
+          expect(requests).toEqual([url])
+          expect(rules).toEqual([`Instructions from: ${url}\n# Remote Instructions`])
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
 })
 
 describe("Instruction.system", () => {
+  it.live("enterprise mode ignores mixed-case remote instructions and retains local files", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          const projectTmp = yield* tmpWithFiles({ "AGENTS.md": "# Local Instructions" })
+          let requests = 0
+          const client = HttpClient.make(() =>
+            Effect.sync(() => {
+              requests++
+              throw new Error("unexpected request")
+            }),
+          )
+          const layer = AppNodeBuilder.build(Instruction.node, [
+            [
+              Config.node,
+              Layer.succeed(
+                Config.Service,
+                TestConfig.make({
+                  get: () =>
+                    Effect.succeed({
+                      instructions: [
+                        "HTTP://example.test/instructions.md",
+                        "hTtPs://example.test/other.md",
+                        "./AGENTS.md",
+                      ],
+                    }),
+                }),
+              ),
+            ],
+            [Global.node, Global.layerWith({ home: projectTmp, config: projectTmp })],
+            [RuntimeFlags.node, RuntimeFlags.layer()],
+            [LayerNodePlatform.httpClient, Layer.succeed(HttpClient.HttpClient, client)],
+          ])
+          const rules = yield* Effect.gen(function* () {
+            return yield* (yield* Instruction.Service).system()
+          }).pipe(provideInstance(projectTmp), Effect.provide(layer))
+
+          expect(rules).toEqual([
+            `Instructions from: ${path.join(projectTmp, "AGENTS.md")}\n# Local Instructions`,
+          ])
+          expect(requests).toBe(0)
+        }),
+      (original) =>
+        Effect.sync(() => {
+          Flag.OPENCODE_ENTERPRISE_MODE = original
+        }),
+    ),
+  )
+
   it.live("loads both project and global AGENTS.md when both exist", () =>
     Effect.gen(function* () {
       const globalTmp = yield* tmpWithFiles({ "AGENTS.md": "# Global Instructions" })

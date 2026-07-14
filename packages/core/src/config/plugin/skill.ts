@@ -8,6 +8,9 @@ import { AbsolutePath } from "../../schema"
 import { SkillV2 } from "../../skill"
 import { Global } from "../../global"
 import { Location } from "../../location"
+import { Flag } from "../../flag/flag"
+
+const isRemoteSkillSource = (value: string) => /^https?:\/\//i.test(value)
 
 export const Plugin = define({
   id: "config-skill",
@@ -32,6 +35,7 @@ export const Plugin = define({
           )
         }
         for (const item of items) {
+          if (Flag.OPENCODE_ENTERPRISE_MODE && isRemoteSkillSource(item)) continue
           if (URL.canParse(item) && /^(https?:)$/.test(new URL(item).protocol)) {
             draft.source(SkillV2.UrlSource.make({ type: "url", url: item }))
             continue

@@ -17,6 +17,9 @@ import { Glob } from "@opencode-ai/core/util/glob"
 import { Discovery } from "./discovery"
 import { isRecord } from "@/util/record"
 import { escapeHtml } from "@/util/html"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+export const isRemoteSkillSource = (value: string) => /^https?:\/\//i.test(value)
 
 const CLAUDE_EXTERNAL_DIR = ".claude"
 const AGENTS_EXTERNAL_DIR = ".agents"
@@ -220,6 +223,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   for (const url of cfg.skills?.urls ?? []) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE && isRemoteSkillSource(url)) continue
     const pulledDirs = yield* discovery.pull(url)
     for (const dir of pulledDirs) {
       yield* scan(state, dir, SKILL_PATTERN)

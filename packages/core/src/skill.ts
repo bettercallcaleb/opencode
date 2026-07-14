@@ -11,6 +11,7 @@ import { PermissionV2 } from "./permission"
 import { AbsolutePath } from "./schema"
 import { SkillDiscovery } from "./skill/discovery"
 import { State } from "./state"
+import { Flag } from "./flag/flag"
 
 export const DirectorySource = Skill.DirectorySource
 export type DirectorySource = Skill.DirectorySource
@@ -63,6 +64,7 @@ const layer = Layer.effect(
       initial: () => ({ sources: [] }),
       draft: (draft) => ({
         source: (source) => {
+          if (Flag.OPENCODE_ENTERPRISE_MODE && source.type === "url") return
           if (draft.sources.some((item) => Source.equals(item, source))) return
           draft.sources.push(source as Types.DeepMutable<Source>)
         },
@@ -72,6 +74,7 @@ const layer = Layer.effect(
 
     const load = Effect.fn("SkillV2.load")(function* (source: Source) {
       const skills: Info[] = []
+      if (Flag.OPENCODE_ENTERPRISE_MODE && source.type === "url") return skills
       if (source.type === "embedded") return [source.skill]
       const directories = source.type === "directory" ? [source.path] : yield* discovery.pull(source.url)
       for (const directory of directories) {
@@ -110,6 +113,7 @@ const layer = Layer.effect(
     const list = Effect.fn("SkillV2.list")(function* () {
       const skills = new Map<string, Info>()
       for (const source of state.get().sources) {
+        if (Flag.OPENCODE_ENTERPRISE_MODE && source.type === "url") continue
         const key = Source.key(source)
         const loaded = cache.get(key) ?? (yield* load(source))
         cache.set(key, loaded)
@@ -122,7 +126,9 @@ const layer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       sources: Effect.fn("SkillV2.sources")(function* () {
-        return state.get().sources
+        const sources = state.get().sources
+        if (!Flag.OPENCODE_ENTERPRISE_MODE) return sources
+        return sources.filter((source) => source.type !== "url")
       }),
       list,
     })

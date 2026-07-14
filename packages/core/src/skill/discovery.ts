@@ -8,6 +8,9 @@ import { Global } from "../global"
 import { makeGlobalNode } from "../effect/app-node"
 import { httpClient } from "../effect/app-node-platform"
 import { AbsolutePath } from "../schema"
+import { Flag } from "../flag/flag"
+
+export const REMOTE_CONTENT_DISABLED_MESSAGE = "Remote instructions and skills are disabled in enterprise mode"
 
 const skillConcurrency = 4
 const fileConcurrency = 8
@@ -83,6 +86,7 @@ const layer = Layer.effect(
     )
 
     const download = Effect.fn("SkillDiscovery.download")(function* (url: string, destination: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return false
       if (yield* fs.exists(destination).pipe(Effect.orDie)) return true
       return yield* HttpClientRequest.get(url).pipe(
         http.execute,
@@ -97,6 +101,7 @@ const layer = Layer.effect(
 
     return Service.of({
       pull: Effect.fn("SkillDiscovery.pull")(function* (url) {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return []
         const base = url.endsWith("/") ? url : `${url}/`
         const source = new URL(base)
         const index = new URL("index.json", source).href

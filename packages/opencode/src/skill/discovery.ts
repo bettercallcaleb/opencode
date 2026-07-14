@@ -6,6 +6,9 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 import { withTransientReadRetry } from "@/util/effect-http-client"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+export const REMOTE_CONTENT_DISABLED_MESSAGE = "Remote instructions and skills are disabled in enterprise mode"
 
 const skillConcurrency = 4
 const fileConcurrency = 8
@@ -35,6 +38,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
     const cache = path.join(Global.Path.cache, "skills")
 
     const download = Effect.fn("Discovery.download")(function* (url: string, dest: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return false
       if (yield* fs.exists(dest).pipe(Effect.orDie)) return true
 
       return yield* HttpClientRequest.get(url).pipe(
@@ -47,6 +51,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient
     })
 
     const pull = Effect.fn("Discovery.pull")(function* (url: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return []
       const base = url.endsWith("/") ? url : `${url}/`
       const index = new URL("index.json", base).href
       const host = base.slice(0, -1)
