@@ -3,9 +3,12 @@ import { Duration, Effect, Match, Option } from "effect"
 import { UI } from "../ui"
 import { Account } from "@/account/account"
 import { AccountID, OrgID, PollExpired, type PollResult, type AccountError } from "@/account/schema"
-import { effectCmd } from "../effect-cmd"
+import { effectCmd, fail } from "../effect-cmd"
 import * as Prompt from "../effect/prompt"
 import open from "open"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+const enterpriseAuthError = () => fail("Public provider authentication is disabled in enterprise mode")
 
 const openBrowser = (url: string) => Effect.promise(() => open(url).catch(() => undefined))
 
@@ -165,6 +168,7 @@ const orgsEffect = Effect.fn("orgs")(function* () {
 })
 
 const openEffect = Effect.fn("open")(function* () {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* enterpriseAuthError()
   const service = yield* Account.Service
   const active = yield* service.active()
   if (Option.isNone(active)) return yield* println("No active account")
@@ -184,6 +188,7 @@ export const LoginCommand = effectCmd({
       type: "string",
     }),
   handler: Effect.fn("Cli.account.login")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* enterpriseAuthError()
     UI.empty()
     yield* Effect.orDie(loginEffect(args.url ?? defaultConsoleUrl))
   }),
@@ -199,6 +204,7 @@ export const LogoutCommand = effectCmd({
       type: "string",
     }),
   handler: Effect.fn("Cli.account.logout")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* enterpriseAuthError()
     UI.empty()
     yield* Effect.orDie(logoutEffect(args.email))
   }),
@@ -209,6 +215,7 @@ export const SwitchCommand = effectCmd({
   describe: false,
   instance: false,
   handler: Effect.fn("Cli.account.switch")(function* () {
+    if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* enterpriseAuthError()
     UI.empty()
     yield* Effect.orDie(switchEffect())
   }),

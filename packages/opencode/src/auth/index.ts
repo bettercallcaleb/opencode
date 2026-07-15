@@ -4,6 +4,9 @@ import { Effect, Layer, Record, Result, Schema, Context } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+const ENTERPRISE_AUTH_ERROR = "Public provider authentication is disabled in enterprise mode"
 
 export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
 
@@ -56,6 +59,7 @@ const layer = Layer.effect(
     const decode = Schema.decodeUnknownOption(Info)
 
     const all = Effect.fn("Auth.all")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       if (process.env.OPENCODE_AUTH_CONTENT) {
         try {
           return JSON.parse(process.env.OPENCODE_AUTH_CONTENT)
@@ -67,10 +71,12 @@ const layer = Layer.effect(
     })
 
     const get = Effect.fn("Auth.get")(function* (providerID: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return undefined
       return (yield* all())[providerID]
     })
 
     const set = Effect.fn("Auth.set")(function* (key: string, info: Info) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* new AuthError({ message: ENTERPRISE_AUTH_ERROR })
       const norm = key.replace(/\/+$/, "")
       const data = yield* all()
       if (norm !== key) delete data[key]
@@ -81,6 +87,7 @@ const layer = Layer.effect(
     })
 
     const remove = Effect.fn("Auth.remove")(function* (key: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* new AuthError({ message: ENTERPRISE_AUTH_ERROR })
       const norm = key.replace(/\/+$/, "")
       const data = yield* all()
       delete data[key]

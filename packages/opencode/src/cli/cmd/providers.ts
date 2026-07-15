@@ -262,7 +262,7 @@ export const ProvidersListCommand = effectCmd({
     const displayPath = authPath.startsWith(homedir) ? authPath.replace(homedir, "~") : authPath
     yield* Prompt.intro(`Credentials ${UI.Style.TEXT_DIM}${displayPath}`)
     const results = Object.entries(yield* Effect.orDie(authSvc.all()))
-    const database = yield* modelsDev.get()
+    const database = Flag.OPENCODE_ENTERPRISE_MODE ? {} : yield* modelsDev.get()
 
     for (const [providerID, result] of results) {
       const name = database[providerID]?.name || providerID
@@ -319,6 +319,8 @@ export const ProvidersLoginCommand = effectCmd({
         type: "string",
       }),
   handler: Effect.fn("Cli.providers.login")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE)
+      return yield* Effect.fail(new CliError({ message: "Public provider authentication is disabled in enterprise mode" }))
     const authSvc = yield* Auth.Service
 
     UI.empty()
@@ -503,6 +505,8 @@ export const ProvidersLogoutCommand = effectCmd({
   // Removes a global auth credential; no project instance needed.
   instance: false,
   handler: Effect.fn("Cli.providers.logout")(function* (args) {
+    if (Flag.OPENCODE_ENTERPRISE_MODE)
+      return yield* Effect.fail(new CliError({ message: "Public provider authentication is disabled in enterprise mode" }))
     const authSvc = yield* Auth.Service
     const modelsDev = yield* ModelsDev.Service
 

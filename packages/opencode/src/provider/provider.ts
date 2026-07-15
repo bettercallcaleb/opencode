@@ -31,6 +31,13 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import {
+  assertEnterpriseRequestURL,
+  enterpriseInferenceFetch,
+  EnterpriseInferencePolicyError,
+  isEnterpriseProviderAllowed,
+} from "@opencode-ai/core/provider/enterprise"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 10_000
 
@@ -1337,7 +1344,8 @@ const layer = Layer.effect(
       Effect.gen(function* () {
         const bridge = yield* EffectBridge.make()
         const cfg = yield* config.get()
-        const modelsDev = yield* modelsDevSvc.get()
+        const enterprise = Flag.OPENCODE_ENTERPRISE_MODE
+        const modelsDev = enterprise ? {} : yield* modelsDevSvc.get()
         const catalog = mapValues(modelsDev, fromModelsDevProvider)
         const database = mapValues(catalog, toPublicInfo)
 
@@ -1374,7 +1382,7 @@ const layer = Layer.effect(
         }
 
         // load plugins first so config() hook runs before reading cfg.provider
-        const plugins = yield* plugin.list()
+        const plugins = enterprise ? [] : yield* plugin.list()
 
         // now read config providers - includes any modifications from plugin config() hook
         const configProviders = Object.entries(cfg.provider ?? {})
@@ -1416,6 +1424,20 @@ const layer = Layer.effect(
 
         // extend database from config
         for (const [providerID, provider] of configProviders) {
+          const enterpriseBaseURL =
+            typeof provider.options?.baseURL === "string"
+              ? provider.options.baseURL.replace(/\$\{([^}]+)\}/g, (item, key) => process.env[String(key)] ?? item)
+              : undefined
+          if (
+            enterprise &&
+            !isEnterpriseProviderAllowed({
+              npm: provider.npm,
+              baseURL: enterpriseBaseURL,
+              models: provider.models,
+              allowedBaseURL: Flag.OPENCODE_ENTERPRISE_VLLM_BASE_URL,
+            })
+          )
+            continue
           const existing = database[providerID]
           const parsed: Info = {
             id: ProviderV2.ID.make(providerID),
@@ -1425,6 +1447,7 @@ const layer = Layer.effect(
             source: "config",
             models: existing?.models ?? {},
           }
+          if (enterprise && enterpriseBaseURL) parsed.options.baseURL = enterpriseBaseURL
 
           for (const [modelID, model] of Object.entries(provider.models ?? {})) {
             const existingModel = parsed.models[model.id ?? modelID]
@@ -1514,7 +1537,7 @@ const layer = Layer.effect(
 
         // load env
         const envs = yield* env.all()
-        for (const [id, provider] of Object.entries(database)) {
+        for (const [id, provider] of enterprise ? [] : Object.entries(database)) {
           const providerID = ProviderV2.ID.make(id)
           if (disabled.has(providerID)) continue
           const apiKey = provider.env.map((item) => envs[item]).find(Boolean)
@@ -1526,7 +1549,7 @@ const layer = Layer.effect(
         }
 
         // load apikeys
-        const auths = yield* auth.all().pipe(Effect.orDie)
+        const auths = enterprise ? {} : yield* auth.all().pipe(Effect.orDie)
         for (const [id, provider] of Object.entries(auths)) {
           const providerID = ProviderV2.ID.make(id)
           if (disabled.has(providerID)) continue
@@ -1559,7 +1582,7 @@ const layer = Layer.effect(
           mergeProvider(providerID, patch)
         }
 
-        for (const [id, fn] of Object.entries(custom(dep))) {
+        for (const [id, fn] of enterprise ? [] : Object.entries(custom(dep))) {
           const providerID = ProviderV2.ID.make(id)
           if (disabled.has(providerID)) continue
           const data = database[providerID]
@@ -1666,6 +1689,17 @@ const layer = Layer.effect(
     async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
       try {
         const provider = s.providers[model.providerID]
+        if (
+          Flag.OPENCODE_ENTERPRISE_MODE &&
+          (!provider ||
+            !isEnterpriseProviderAllowed({
+              npm: model.api.npm,
+              baseURL: typeof provider.options.baseURL === "string" ? provider.options.baseURL : undefined,
+              models: provider.models,
+              allowedBaseURL: Flag.OPENCODE_ENTERPRISE_VLLM_BASE_URL,
+            }))
+        )
+          throw new EnterpriseInferencePolicyError()
         const options = { ...provider.options }
 
         if (
@@ -1734,8 +1768,11 @@ const layer = Layer.effect(
         delete options["headerTimeout"]
 
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
+          if (Flag.OPENCODE_ENTERPRISE_MODE)
+            assertEnterpriseRequestURL(input, Flag.OPENCODE_ENTERPRISE_VLLM_BASE_URL)
           const fetchFn = customFetch ?? fetch
-          const opts = init ?? {}
+          const opts = { ...init }
+          if (Flag.OPENCODE_ENTERPRISE_MODE) opts.redirect = "manual"
           const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
           const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
           const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
@@ -1750,11 +1787,15 @@ const layer = Layer.effect(
           const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
           if (combined) opts.signal = combined
 
-          const res = await fetchFn(input, {
+          const request = {
             ...opts,
             // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
             timeout: false,
-          }).finally(() => headerTimeoutCtl?.clear())
+          }
+          const res = await (Flag.OPENCODE_ENTERPRISE_MODE
+            ? enterpriseInferenceFetch(input, request, Flag.OPENCODE_ENTERPRISE_VLLM_BASE_URL, fetchFn)
+            : fetchFn(input, request)
+          ).finally(() => headerTimeoutCtl?.clear())
 
           if (!chunkAbortCtl) return res
           return wrapSSE(res, chunkTimeout, chunkAbortCtl)
@@ -1939,7 +1980,11 @@ const layer = Layer.effect(
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      if (cfg.model) return parseModel(cfg.model)
+      if (cfg.model) {
+        const parsed = parseModel(cfg.model)
+        if (Flag.OPENCODE_ENTERPRISE_MODE) yield* getModel(parsed.providerID, parsed.modelID)
+        return parsed
+      }
 
       const s = yield* InstanceState.get(state)
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(

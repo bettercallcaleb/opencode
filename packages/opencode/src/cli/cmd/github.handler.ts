@@ -34,6 +34,8 @@ import { Process } from "@/util/process"
 import { parseGitHubRemote } from "@/util/repository"
 import { Effect } from "effect"
 import { extractResponseText, formatPromptTooLargeError } from "./github.shared"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { CliError } from "../effect-cmd"
 
 type GitHubAuthor = {
   login: string
@@ -153,6 +155,10 @@ type UserEvent = (typeof USER_EVENTS)[number]
 type RepoEvent = (typeof REPO_EVENTS)[number]
 
 export const githubInstall = Effect.fn("Cli.github.install")(function* () {
+  if (Flag.OPENCODE_ENTERPRISE_MODE)
+    return yield* Effect.fail(
+      new CliError({ message: "Only the configured internal vLLM endpoint is allowed in enterprise mode" }),
+    )
   const maybeCtx = yield* InstanceRef
   if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
   const ctx = maybeCtx

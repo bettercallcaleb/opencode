@@ -13,6 +13,7 @@ import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { Config } from "@/config/config"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, FSUtil.node])))
 
@@ -38,6 +39,19 @@ function providerAuthLayer(directory: string, plugins: string[]) {
 }
 
 describe("plugin.auth-override", () => {
+  it.instance(
+    "enterprise mode initializes no provider auth plugins",
+    () => {
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      return Effect.gen(function* () {
+        const tmp = yield* TestInstance
+        expect(yield* ProviderAuth.use.methods().pipe(Effect.provide(providerAuthLayer(tmp.directory, [])))).toEqual({})
+      }).pipe(Effect.ensuring(Effect.sync(() => (Flag.OPENCODE_ENTERPRISE_MODE = original))))
+    },
+    { git: true },
+  )
+
   it.instance(
     "user plugin overrides built-in github-copilot auth",
     () =>

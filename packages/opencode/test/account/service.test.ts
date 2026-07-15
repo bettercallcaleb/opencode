@@ -455,6 +455,38 @@ it.live("enterprise config rejects before token refresh and preserves the stored
   ),
 )
 
+it.live("enterprise login and polling reject before HTTP", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      return original
+    }),
+    () =>
+      Effect.gen(function* () {
+        let requests = 0
+        const client = HttpClient.make(() =>
+          Effect.sync(() => {
+            requests++
+            throw new Error("unexpected request")
+          }),
+        )
+        const loginExit = yield* Account.Service.use((service) => service.login("https://one.example.com")).pipe(
+          Effect.provide(live(client)),
+          Effect.exit,
+        )
+        const pollExit = yield* Account.Service.use((service) => service.poll(login())).pipe(
+          Effect.provide(live(client)),
+          Effect.exit,
+        )
+        expect(Exit.isFailure(loginExit)).toBe(true)
+        expect(Exit.isFailure(pollExit)).toBe(true)
+        expect(requests).toBe(0)
+      }),
+    (original) => Effect.sync(() => (Flag.OPENCODE_ENTERPRISE_MODE = original)),
+  ),
+)
+
 it.live("poll stores the account and first org on success", () =>
   Effect.gen(function* () {
     const client = HttpClient.make((req) =>

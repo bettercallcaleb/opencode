@@ -310,10 +310,13 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const token = Effect.fn("Account.token")((accountID: AccountID) =>
-      resolveAccess(accountID).pipe(Effect.map(Option.map((r) => r.accessToken))),
+      Flag.OPENCODE_ENTERPRISE_MODE
+        ? Effect.succeed(Option.none<AccessToken>())
+        : resolveAccess(accountID).pipe(Effect.map(Option.map((r) => r.accessToken))),
     )
 
     const activeOrg = Effect.fn("Account.activeOrg")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return Option.none<ActiveOrg>()
       const activeAccount = yield* repo.active()
       if (Option.isNone(activeAccount)) return Option.none<ActiveOrg>()
 
@@ -328,6 +331,7 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const orgsByAccount = Effect.fn("Account.orgsByAccount")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return []
       const accounts = yield* repo.list()
       return yield* Effect.forEach(
         accounts,
@@ -341,6 +345,7 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const orgs = Effect.fn("Account.orgs")(function* (accountID: AccountID) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return []
       const resolved = yield* resolveAccess(accountID)
       if (Option.isNone(resolved)) return []
 
@@ -350,6 +355,10 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const remove = Effect.fn("Account.remove")(function* (accountID: AccountID) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE)
+        return yield* Effect.fail(
+          new AccountServiceError({ message: "Public provider authentication is disabled in enterprise mode" }),
+        )
       const active = yield* repo.active()
       yield* repo.remove(accountID)
       if (Option.isNone(active) || active.value.id !== accountID) return
@@ -391,6 +400,10 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const login = Effect.fn("Account.login")(function* (server: string) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE)
+        return yield* Effect.fail(
+          new AccountServiceError({ message: "Public provider authentication is disabled in enterprise mode" }),
+        )
       const normalizedServer = normalizeServerUrl(server)
       const response = yield* executeEffectOk(
         HttpClientRequest.post(`${normalizedServer}/auth/device/code`).pipe(
@@ -413,6 +426,10 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
     })
 
     const poll = Effect.fn("Account.poll")(function* (input: Login) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE)
+        return yield* Effect.fail(
+          new AccountServiceError({ message: "Public provider authentication is disabled in enterprise mode" }),
+        )
       const response = yield* executeEffect(
         HttpClientRequest.post(`${input.server}/auth/device/token`).pipe(
           HttpClientRequest.acceptJson,
@@ -458,13 +475,22 @@ const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient.HttpCl
       return new PollSuccess({ email: account.email })
     })
 
+    const active = () => (Flag.OPENCODE_ENTERPRISE_MODE ? Effect.succeed(Option.none<Info>()) : repo.active())
+    const list = () => (Flag.OPENCODE_ENTERPRISE_MODE ? Effect.succeed([]) : repo.list())
+    const use = (accountID: AccountID, orgID: Option.Option<OrgID>) =>
+      Flag.OPENCODE_ENTERPRISE_MODE
+        ? Effect.fail(
+            new AccountServiceError({ message: "Public provider authentication is disabled in enterprise mode" }),
+          )
+        : repo.use(accountID, orgID)
+
     return Service.of({
-      active: repo.active,
+      active,
       activeOrg,
-      list: repo.list,
+      list,
       orgsByAccount,
       remove,
-      use: repo.use,
+      use,
       orgs,
       config,
       token,

@@ -29,6 +29,7 @@ import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
+import { runtimeEnterpriseMode } from "@/telemetry"
 
 const CUSTOM_ID = "_custom"
 
@@ -47,6 +48,7 @@ export const DialogConnectProvider: Component<{
   directory?: Accessor<string | undefined>
   controller?: ReturnType<typeof useProviderConnectController>
 }> = (props) => {
+  if (runtimeEnterpriseMode()) return null
   const fallback = useProviderConnectController()
   const controller = props.controller ?? fallback
   const language = useLanguage()

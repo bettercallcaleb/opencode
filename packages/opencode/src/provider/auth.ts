@@ -7,6 +7,9 @@ import { optional } from "@opencode-ai/core/schema"
 import { Plugin } from "../plugin"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { Array as Arr, Effect, Layer, Record, Result, Context, Schema } from "effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
+
+const ENTERPRISE_AUTH_ERROR = "Public provider authentication is disabled in enterprise mode"
 
 const When = Schema.Struct({
   key: Schema.String,
@@ -113,7 +116,7 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
     const plugin = yield* Plugin.Service
     const state = yield* InstanceState.make<State>(
       Effect.fn("ProviderAuth.state")(function* () {
-        const plugins = yield* plugin.list()
+        const plugins = Flag.OPENCODE_ENTERPRISE_MODE ? [] : yield* plugin.list()
         return {
           hooks: Record.fromEntries(
             Arr.filterMap(plugins, (x) =>
@@ -129,6 +132,7 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
 
     const decode = Schema.decodeUnknownSync(Methods)
     const methods = Effect.fn("ProviderAuth.methods")(function* () {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return {}
       const hooks = (yield* InstanceState.get(state)).hooks
       return decode(
         Record.map(hooks, (item) =>
@@ -163,6 +167,7 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
     const authorize = Effect.fn("ProviderAuth.authorize")(function* (
       input: { providerID: ProviderV2.ID } & AuthorizeInput,
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* new Auth.AuthError({ message: ENTERPRISE_AUTH_ERROR })
       const { hooks, pending } = yield* InstanceState.get(state)
       const method = hooks[input.providerID].methods[input.method]
       if (method.type !== "oauth") return
@@ -188,6 +193,7 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
     const callback = Effect.fn("ProviderAuth.callback")(function* (
       input: { providerID: ProviderV2.ID } & CallbackInput,
     ) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* new Auth.AuthError({ message: ENTERPRISE_AUTH_ERROR })
       const pending = (yield* InstanceState.get(state)).pending
       const match = pending.get(input.providerID)
       if (!match) return yield* new OauthMissing({ providerID: input.providerID })

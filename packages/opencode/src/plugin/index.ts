@@ -64,6 +64,7 @@ export function experimentalWebSocketsEnabled(input: { enabled: boolean; channel
 
 // Built-in plugins that are directly imported (not installed from npm)
 function internalPlugins(flags: RuntimeFlags.Info): PluginInstance[] {
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return []
   return [
     // Temporary rollout: pre-release builds use WebSockets by default; releases require explicit opt-in.
     (input) =>

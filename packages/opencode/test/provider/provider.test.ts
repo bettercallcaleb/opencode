@@ -23,6 +23,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const originalEnv = new Map<string, string | undefined>()
 
@@ -86,6 +87,45 @@ const languageBaseURL = (language: unknown) => (language as { config: { baseURL:
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node])))
 const experimentalModels = testEffect(providerLayer({ enableExperimentalModels: true }))
+
+it.instance("enterprise mode exposes only explicit matching OpenAI-compatible providers", () => {
+  const original = Flag.OPENCODE_ENTERPRISE_MODE
+  return Effect.gen(function* () {
+    Flag.OPENCODE_ENTERPRISE_MODE = true
+    yield* setProcessEnv("OPENCODE_ENTERPRISE_VLLM_BASE_URL", "https://vllm.internal/v1")
+    yield* setProcessEnv("OPENAI_API_KEY", "public-key")
+    yield* setProcessEnv(
+      "OPENCODE_CONFIG_CONTENT",
+      JSON.stringify({
+        provider: {
+          internal: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://vllm.internal/v1/", apiKey: "local-key" },
+            models: { llama: { name: "Llama" } },
+          },
+          wrong: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://public.example/v1" },
+            models: { public: { name: "Public" } },
+          },
+          empty: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://vllm.internal/v1" },
+          },
+          openai: {
+            npm: "@ai-sdk/openai",
+            options: { baseURL: "https://vllm.internal/v1" },
+            models: { gpt: { name: "GPT" } },
+          },
+        },
+      }),
+    )
+
+    const providers = yield* list
+    expect(Object.keys(providers)).toEqual(["internal"])
+    expect(Object.keys(providers[ProviderV2.ID.make("internal")].models)).toEqual(["llama"])
+  }).pipe(Effect.ensuring(Effect.sync(() => (Flag.OPENCODE_ENTERPRISE_MODE = original))))
+})
 
 const alphaProviderConfig = {
   provider: {

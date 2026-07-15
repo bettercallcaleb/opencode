@@ -1,8 +1,9 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import { Auth } from "../../src/auth"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const it = testEffect(LayerNode.compile(Auth.node))
 
@@ -70,6 +71,22 @@ describe("Auth", () => {
       yield* auth.remove("anthropic")
       const after = yield* auth.all()
       expect(after["anthropic"]).toBeUndefined()
+    }),
+  )
+
+  it.instance("enterprise mode ignores stored credentials and blocks mutation", () =>
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      yield* auth.set("openai", { type: "api", key: "stored-key" })
+      const original = Flag.OPENCODE_ENTERPRISE_MODE
+      Flag.OPENCODE_ENTERPRISE_MODE = true
+      yield* Effect.gen(function* () {
+        expect(yield* auth.all()).toEqual({})
+        expect(yield* auth.get("openai")).toBeUndefined()
+        expect(Exit.isFailure(yield* Effect.exit(auth.set("openai", { type: "api", key: "replacement" })))).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(auth.remove("openai")))).toBe(true)
+      }).pipe(Effect.ensuring(Effect.sync(() => (Flag.OPENCODE_ENTERPRISE_MODE = original))))
+      expect((yield* auth.get("openai"))?.type).toBe("api")
     }),
   )
 })
