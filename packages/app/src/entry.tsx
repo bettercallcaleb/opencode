@@ -10,6 +10,7 @@ import { handleNotificationClick } from "@/utils/notification-click"
 import { authFromToken } from "@/utils/server"
 import pkg from "../package.json"
 import { ServerConnection } from "./context/server"
+import { initializeRuntimeTelemetry } from "./telemetry"
 
 const DEFAULT_SERVER_URL_KEY = "opencode.settings.dat:defaultServerUrl"
 
@@ -134,7 +135,7 @@ const platform: Platform = {
   setDefaultServer: writeDefaultServerUrl,
 }
 
-if (import.meta.env.VITE_SENTRY_DSN) {
+initializeRuntimeTelemetry(!!import.meta.env.VITE_SENTRY_DSN, () =>
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
@@ -150,8 +151,8 @@ if (import.meta.env.VITE_SENTRY_DSN) {
           i.name !== "Breadcrumbs" && !(import.meta.env.OPENCODE_CHANNEL === "prod" && i.name === "GlobalHandlers"),
       )
     },
-  })
-}
+  }),
+)
 
 if (root instanceof HTMLElement) {
   const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))

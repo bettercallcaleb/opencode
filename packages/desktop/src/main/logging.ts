@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { ZipWriter, BlobWriter, BlobReader } from "@zip.js/zip.js"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
+import { isTruthyEnvironmentValue } from "./updater-policy"
 
 const MAX_LOG_AGE_DAYS = 7
 const TAIL_LINES = 1000
@@ -34,6 +35,7 @@ export function initLogging() {
 }
 
 export function initCrashReporter() {
+  if (isTruthyEnvironmentValue(process.env.OPENCODE_ENTERPRISE_MODE)) return
   const dir = join(app.getPath("userData"), "Crashpad")
   mkdirSync(dir, { recursive: true })
   app.setPath("crashDumps", dir)

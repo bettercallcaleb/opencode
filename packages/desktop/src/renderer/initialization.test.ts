@@ -29,9 +29,15 @@ describe("desktop renderer initialization", () => {
   })
 
   test("returns initialized sidecar data", () => {
-    const sidecar = { url: "http://127.0.0.1:1234", username: "opencode", password: "secret" }
+    const sidecar = {
+      url: "http://127.0.0.1:1234",
+      username: "opencode",
+      password: "secret",
+      enterpriseMode: true,
+    }
 
     expect(initializationData(Object.assign(() => sidecar, { error: undefined }))).toBe(sidecar)
+    expect(initializationData(Object.assign(() => sidecar, { error: undefined }))?.enterpriseMode).toBe(true)
   })
 
   test("does not discard falsy initialization errors", () => {

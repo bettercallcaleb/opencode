@@ -17,7 +17,7 @@ import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { ServerAuth } from "../../src/server/auth"
 import { authorizationRouterMiddleware } from "../../src/server/routes/instance/httpapi/middleware/authorization"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
-import { serveEmbeddedUIEffect, serveUIEffect } from "../../src/server/shared/ui"
+import { injectRuntimePolicy, serveEmbeddedUIEffect, serveUIEffect } from "../../src/server/shared/ui"
 import { testEffect } from "../lib/effect"
 
 const testStateLayer = Layer.effectDiscard(
@@ -184,6 +184,17 @@ function responseText(response: Response) {
 }
 
 describe("HttpApi UI fallback", () => {
+  it.live("injects only the enterprise runtime policy into web bootstrap HTML", () =>
+    Effect.sync(() => {
+      expect(injectRuntimePolicy("<html><head></head><body></body></html>", true)).toBe(
+        '<html><head><meta name="opencode-enterprise-mode" content="true"></head><body></body></html>',
+      )
+      expect(injectRuntimePolicy("<html><head></head><body></body></html>", false)).toBe(
+        "<html><head></head><body></body></html>",
+      )
+    }),
+  )
+
   it.live("serves the web UI through the HTTP API app", () =>
     Effect.gen(function* () {
       let proxiedUrl: string | undefined

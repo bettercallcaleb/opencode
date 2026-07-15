@@ -33,6 +33,7 @@ import { Vcs } from "@/project/vcs"
 import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
 import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
 
 export const Info = Schema.Struct({
@@ -530,9 +531,13 @@ const layer = Layer.effect(
         OPENCODE_AUTH_CONTENT: JSON.stringify(yield* auth.all()),
         OPENCODE_WORKSPACE_ID: config.id,
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
-        OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
-        OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-        OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
+        ...(Flag.OPENCODE_ENTERPRISE_MODE
+          ? {}
+          : {
+              OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
+              OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+              OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
+            }),
       }
 
       yield* WorkspaceAdapterRuntime.create(adapter, config, env)

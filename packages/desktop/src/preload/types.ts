@@ -19,6 +19,7 @@ export type ServerReadyData = {
   url: string
   username: string | null
   password: string | null
+  enterpriseMode: boolean
 }
 
 export type WslServersAPI = WslServersPlatform

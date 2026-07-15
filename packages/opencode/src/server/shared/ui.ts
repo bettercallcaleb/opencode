@@ -3,6 +3,7 @@ import { Effect, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { createHash } from "node:crypto"
 import { ProxyUtil } from "../proxy-util"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 let embeddedUIPromise: Promise<Record<string, string> | null> | undefined
 
@@ -52,11 +53,19 @@ function notFound() {
   return HttpServerResponse.jsonUnsafe({ error: "Not Found" }, { status: 404 })
 }
 
+export function injectRuntimePolicy(body: string, enterpriseMode: boolean) {
+  if (!enterpriseMode) return body
+  const meta = '<meta name="opencode-enterprise-mode" content="true">'
+  return body.includes("</head>") ? body.replace("</head>", `${meta}</head>`) : `${meta}${body}`
+}
+
 function embeddedUIResponse(file: string, body: Uint8Array) {
   const mime = FSUtil.mimeType(file)
   const headers = new Headers({ "content-type": mime })
   if (mime.startsWith("text/html")) {
-    headers.set("content-security-policy", cspForHtml(new TextDecoder().decode(body)))
+    const html = injectRuntimePolicy(new TextDecoder().decode(body), Flag.OPENCODE_ENTERPRISE_MODE)
+    headers.set("content-security-policy", cspForHtml(html))
+    return HttpServerResponse.text(html, { headers })
   }
   return HttpServerResponse.raw(body, { headers })
 }
@@ -94,7 +103,7 @@ export function serveUIEffect(
     const headers = proxyResponseHeaders(response.headers)
 
     if (response.headers["content-type"]?.includes("text/html")) {
-      const body = yield* response.text
+      const body = injectRuntimePolicy(yield* response.text, Flag.OPENCODE_ENTERPRISE_MODE)
       headers.set("Content-Security-Policy", cspForHtml(body))
       return HttpServerResponse.text(body, { status: response.status, headers })
     }

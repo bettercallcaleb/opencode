@@ -5,6 +5,7 @@ import {
   AppBaseProviders,
   AppInterface,
   handleNotificationClick,
+  initializeRuntimeTelemetry,
   loadLocaleDict,
   normalizeLocale,
   type Locale,
@@ -35,28 +36,33 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
   throw new Error(t("error.dev.rootNotFound"))
 }
 
-if (import.meta.env.VITE_SENTRY_DSN) {
-  Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
-    release: import.meta.env.VITE_SENTRY_RELEASE ?? `desktop@${pkg.version}`,
-    initialScope: {
-      tags: {
-        platform: "desktop",
+const sidecarInitialization = window.api.awaitInitialization()
+void sidecarInitialization.then((data) => {
+  window.__OPENCODE__ ??= {}
+  window.__OPENCODE__.enterpriseMode = data.enterpriseMode
+  initializeRuntimeTelemetry(!!import.meta.env.VITE_SENTRY_DSN, () =>
+    Sentry.init({
+      dsn: import.meta.env.VITE_SENTRY_DSN,
+      environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
+      release: import.meta.env.VITE_SENTRY_RELEASE ?? `desktop@${pkg.version}`,
+      initialScope: {
+        tags: {
+          platform: "desktop",
+        },
       },
-    },
-    integrations: (integrations) => {
-      return integrations.filter(
-        (i) =>
-          i.name !== "Breadcrumbs" &&
-          !(
-            import.meta.env.OPENCODE_CHANNEL === "prod" &&
-            (i.name === "GlobalHandlers" || i.name === "BrowserApiErrors")
-          ),
-      )
-    },
-  })
-}
+      integrations: (integrations) => {
+        return integrations.filter(
+          (i) =>
+            i.name !== "Breadcrumbs" &&
+            !(
+              import.meta.env.OPENCODE_CHANNEL === "prod" &&
+              (i.name === "GlobalHandlers" || i.name === "BrowserApiErrors")
+            ),
+        )
+      },
+    }),
+  )
+}).catch(() => {})
 
 void initI18n()
 
@@ -344,7 +350,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
   const [windowCount] = createResource(() => window.api.getWindowCount())
 
   // Fetch sidecar credentials (available immediately, before health check)
-  const [sidecar] = createResource(() => window.api.awaitInitialization())
+  const [sidecar] = createResource(() => sidecarInitialization)
 
   const [defaultServer] = createResource(() => platform.getDefaultServer?.())
   const [locale] = createResource(loadLocale)

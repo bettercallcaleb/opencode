@@ -13,7 +13,7 @@ import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
-import { CHANNEL } from "./constants"
+import { CHANNEL, ENTERPRISE_MODE, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -28,7 +28,6 @@ import {
   type SidecarListener,
 } from "./server"
 import { setupAutoUpdater, showUpdaterDialog } from "./updater"
-import { UPDATER_ENABLED } from "./constants"
 import {
   getLastFocusedWindow,
   registerRendererProtocol,
@@ -139,7 +138,7 @@ const main = Effect.gen(function* () {
   )
   if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
   logger = initLogging()
-  initCrashReporter()
+  if (!ENTERPRISE_MODE) initCrashReporter()
 
   const wslServers = createWslServersController(
     app.getVersion(),
@@ -354,6 +353,7 @@ const main = Effect.gen(function* () {
       url,
       username: "opencode",
       password,
+      enterpriseMode: ENTERPRISE_MODE,
     })
 
     if (process.platform === "win32") {

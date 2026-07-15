@@ -4,18 +4,19 @@ import { Flag } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
 import { runID } from "./shared"
 
-const endpoint = Flag.OTEL_EXPORTER_OTLP_ENDPOINT
+const endpoint = () => Flag.OTEL_EXPORTER_OTLP_ENDPOINT
 
-const headers = Flag.OTEL_EXPORTER_OTLP_HEADERS
-  ? Flag.OTEL_EXPORTER_OTLP_HEADERS.split(",").reduce(
-      (acc, entry) => {
-        const [key, ...value] = entry.split("=")
-        acc[key] = value.join("=")
-        return acc
-      },
-      {} as Record<string, string>,
-    )
-  : undefined
+const headers = () =>
+  Flag.OTEL_EXPORTER_OTLP_HEADERS
+    ? Flag.OTEL_EXPORTER_OTLP_HEADERS.split(",").reduce(
+        (acc, entry) => {
+          const [key, ...value] = entry.split("=")
+          acc[key] = value.join("=")
+          return acc
+        },
+        {} as Record<string, string>,
+      )
+    : undefined
 
 function resourceAttributes() {
   const value = process.env.OTEL_RESOURCE_ATTRIBUTES
@@ -48,12 +49,16 @@ export function resource(): { serviceName: string; serviceVersion: string; attri
 }
 
 export function loggers() {
-  if (!endpoint) return []
-  return [OtlpLogger.make({ url: `${endpoint}/v1/logs`, resource: resource(), headers })]
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return []
+  const url = endpoint()
+  if (!url) return []
+  return [OtlpLogger.make({ url: `${url}/v1/logs`, resource: resource(), headers: headers() })]
 }
 
 export async function tracingLayer() {
-  if (!endpoint) return Layer.empty
+  if (Flag.OPENCODE_ENTERPRISE_MODE) return Layer.empty
+  const url = endpoint()
+  if (!url) return Layer.empty
   const NodeSdk = await import("@effect/opentelemetry/NodeSdk")
   const OTLP = await import("@opentelemetry/exporter-trace-otlp-http")
   const SdkBase = await import("@opentelemetry/sdk-trace-base")
@@ -69,8 +74,8 @@ export async function tracingLayer() {
     resource: resource(),
     spanProcessor: new SdkBase.BatchSpanProcessor(
       new OTLP.OTLPTraceExporter({
-        url: `${endpoint}/v1/traces`,
-        headers,
+        url: `${url}/v1/traces`,
+        headers: headers(),
       }),
     ),
   }))

@@ -55,6 +55,7 @@ import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
 import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { createSessionLineage } from "@/pages/session/session-lineage"
+import { captureRuntimeException } from "@/telemetry"
 
 import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
 import { NewHome, LegacyHome } from "@/pages/home"
@@ -231,6 +232,7 @@ declare global {
   interface Window {
     __OPENCODE__?: {
       deepLinks?: string[]
+      enterpriseMode?: boolean
     }
     api?: {
       setTitlebar?: (theme: { mode: "light" | "dark"; scheme?: "system" | "light" | "dark" }) => Promise<void>
@@ -375,7 +377,7 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
           <UiI18nBridge>
             <ErrorBoundary
               fallback={(error) => {
-                Sentry.captureException(error)
+                captureRuntimeException(error, Sentry.captureException)
                 return <ErrorPage error={error} />
               }}
             >
