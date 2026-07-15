@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js"
 import type { RGBA } from "@opentui/core"
 import open from "open"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export interface LinkProps {
   href: string
@@ -25,6 +26,7 @@ export function Link(props: LinkProps) {
       width={props.width}
       wrapMode={props.wrapMode}
       onMouseUp={() => {
+        if (Flag.OPENCODE_ENTERPRISE_MODE) return
         open(props.href).catch(() => {})
       }}
     >

@@ -1,11 +1,12 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import Http from "node:http"
-import { describe, expect } from "bun:test"
-import { Context, Effect, Layer, Queue } from "effect"
+import { describe, expect, test } from "bun:test"
+import { Context, Effect, Exit, Layer, Queue } from "effect"
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { HttpApiProxy } from "../../src/server/routes/instance/httpapi/middleware/proxy"
 import { testEffect } from "../lib/effect"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 function serverUrl() {
   return HttpServer.HttpServer.use((server) => Effect.succeed(HttpServer.formatAddress(server.address)))
@@ -59,6 +60,37 @@ function echoWebSocket(request: HttpServerRequest.HttpServerRequest) {
 }
 
 describe("HttpApi workspace proxy", () => {
+  test("blocks enterprise HTTP proxying before the upstream request", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const original = Flag.OPENCODE_ENTERPRISE_MODE
+        Flag.OPENCODE_ENTERPRISE_MODE = true
+        return original
+      }),
+      () =>
+        Effect.gen(function* () {
+          let requests = 0
+          const client = HttpClient.make(() =>
+            Effect.sync(() => {
+              requests++
+              throw new Error("unexpected upstream request")
+            }),
+          )
+          const request = HttpServerRequest.fromWeb(new Request("http://localhost/anything"))
+          const exit = yield* HttpApiProxy.http(
+            client,
+            "https://workspace.example/blocked",
+            undefined,
+            request,
+          ).pipe(Effect.exit)
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          expect(requests).toBe(0)
+        }),
+      (original) => Effect.sync(() => void (Flag.OPENCODE_ENTERPRISE_MODE = original)),
+    ).pipe(Effect.runPromise),
+  )
+
   it.live("proxies HTTP request and returns streamed response with status and headers", () =>
     Effect.gen(function* () {
       const url = yield* listenServer(

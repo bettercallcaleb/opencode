@@ -489,6 +489,22 @@ git diff --check
 git status --short
 ```
 
+## Application-owned outbound policy status
+
+OpenCode-owned application egress is now guarded in enterprise mode by the shared policy in
+`packages/core/src/network/outbound-policy.ts` and by invocation-time checks at the provider inference, remote
+workspace, HTTP/WebSocket proxy, CLI attach, embedded-web, desktop, and browser client boundaries. Server-side
+egress is limited to the separately validated `OPENCODE_ENTERPRISE_VLLM_BASE_URL` inference path. Desktop clients
+retain access to their managed sidecar and loopback OpenCode servers; enterprise browser clients retain same-origin
+and explicit loopback OpenCode communication. RFC1918 addresses are not treated as trusted merely because they look
+internal.
+
+This is an application-owned transport boundary, not a complete process sandbox. Arbitrary shell commands and
+arbitrary child processes can create sockets without passing through JavaScript `fetch`, Effect HTTP clients, or the
+OpenCode URL policy. OS or network-namespace firewall enforcement remains mandatory for a hard zero-egress
+guarantee. The next hardening step is to constrain shell/process execution and add deployment-level DNS and network
+egress enforcement. Until that work is complete, this fork must not be described as fully network-contained.
+
 ## Audit limitations
 
 This audit is source-based and does not claim that the list of transitive destinations inside third-party SDKs is exhaustive. It deliberately classifies any destination chosen by third-party runtime code as unsafe unless the enterprise implementation can prove it is constrained. Dynamic plugin code, shell commands, child processes, environment proxies, DNS, redirects, and native Electron components require runtime testing and deployment-level controls in addition to source changes.

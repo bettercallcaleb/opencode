@@ -10,7 +10,7 @@ import { handleNotificationClick } from "@/utils/notification-click"
 import { authFromToken } from "@/utils/server"
 import pkg from "../package.json"
 import { ServerConnection } from "./context/server"
-import { initializeRuntimeTelemetry } from "./telemetry"
+import { initializeRuntimeTelemetry, runtimeEnterpriseMode } from "./telemetry"
 
 const DEFAULT_SERVER_URL_KEY = "opencode.settings.dat:defaultServerUrl"
 
@@ -70,7 +70,7 @@ const notify: Platform["notify"] = async (title, description, href) => {
 
   const notification = new Notification(title, {
     body: description ?? "",
-    icon: "https://opencode.ai/favicon-96x96-v3.png",
+    ...(runtimeEnterpriseMode() ? {} : { icon: "https://opencode.ai/favicon-96x96-v3.png" }),
   })
 
   notification.onclick = () => {
@@ -80,6 +80,7 @@ const notify: Platform["notify"] = async (title, description, href) => {
 }
 
 const openLink: Platform["openLink"] = (url) => {
+  if (runtimeEnterpriseMode()) return
   window.open(url, "_blank")
 }
 
@@ -108,6 +109,7 @@ const getCurrentUrl = () => {
 }
 
 const getDefaultUrl = () => {
+  if (runtimeEnterpriseMode()) return getCurrentUrl()
   const lsDefault = readDefaultServerUrl()
   if (lsDefault) return lsDefault
   return getCurrentUrl()

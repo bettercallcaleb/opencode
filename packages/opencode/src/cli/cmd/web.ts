@@ -5,6 +5,17 @@ import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import open from "open"
 import { networkInterfaces } from "os"
+import { assertEnterpriseOutboundURL } from "@opencode-ai/core/network/outbound-policy"
+
+function openLocal(url: string) {
+  if (Flag.OPENCODE_ENTERPRISE_MODE)
+    assertEnterpriseOutboundURL(url, {
+      enterpriseMode: true,
+      purpose: "local-opencode",
+      allowLocalhost: true,
+    })
+  open(url).catch(() => {})
+}
 
 function getNetworkIPs() {
   const nets = networkInterfaces()
@@ -72,11 +83,11 @@ export const WebCommand = effectCmd({
       }
 
       // Open localhost in browser
-      open(localhostUrl).catch(() => {})
+      openLocal(localhostUrl)
     } else {
       const displayUrl = server.url.toString()
       UI.println(UI.Style.TEXT_INFO_BOLD + "  Web interface:    ", UI.Style.TEXT_NORMAL, displayUrl)
-      open(displayUrl).catch(() => {})
+      openLocal(displayUrl)
     }
 
     yield* Effect.never

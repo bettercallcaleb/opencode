@@ -34,6 +34,10 @@ import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
 import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import {
+  assertEnterpriseOutboundDisabled,
+  assertEnterpriseOutboundURL,
+} from "@opencode-ai/core/network/outbound-policy"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
 
 export const Info = Schema.Struct({
@@ -165,6 +169,17 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
     const connections = new Map<WorkspaceV2.ID, ConnectionStatus>()
     const syncFibers = yield* FiberMap.make<WorkspaceV2.ID, void, SyncLoopError>()
+    const rejectRemote = (url: string | URL) =>
+      Effect.sync(() =>
+        assertEnterpriseOutboundURL(url, {
+          enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+          purpose: "forbidden",
+        }),
+      )
+    const rejectRemoteAdapter = (type: string) =>
+      Effect.sync(() => {
+        if (Flag.OPENCODE_ENTERPRISE_MODE && type !== "worktree") assertEnterpriseOutboundDisabled(true)
+      })
 
     const setStatus = (id: WorkspaceV2.ID, status: ConnectionStatus["status"]) => {
       const prev = connections.get(id)
@@ -186,6 +201,7 @@ const layer = Layer.effect(
       url: URL | string,
       headers: HeadersInit | undefined,
     ) {
+      yield* rejectRemote(url)
       const response = yield* http.execute(
         HttpClientRequest.get(route(url, "/global/event"), {
           headers: new Headers(headers),
@@ -267,12 +283,15 @@ const layer = Layer.effect(
         const workspace = yield* get(input.workspaceID)
         if (!workspace) return input.fallback
 
+        yield* rejectRemoteAdapter(workspace.type)
         const target = yield* WorkspaceAdapterRuntime.target(workspace)
 
         if (target.type === "local") {
           const store = yield* InstanceStore.Service
           return yield* store.provide({ directory: target.directory }, input.local())
         }
+
+        yield* rejectRemote(target.url)
 
         const response = yield* http.execute(input.remote({ workspace, target })).pipe(
           Effect.catch((error) =>
@@ -310,6 +329,7 @@ const layer = Layer.effect(
       url: URL | string,
       headers: HeadersInit | undefined,
     ) {
+      yield* rejectRemote(url)
       const sessionIDs = (yield* db
         .select({ id: SessionTable.id })
         .from(SessionTable)
@@ -365,9 +385,11 @@ const layer = Layer.effect(
     })
 
     const syncWorkspaceLoop = Effect.fn("Workspace.syncWorkspaceLoop")(function* (space: Info) {
+      yield* rejectRemoteAdapter(space.type)
       const target = yield* WorkspaceAdapterRuntime.target(space)
 
       if (target.type === "local") return
+      yield* rejectRemote(target.url)
 
       let attempt = 0
 
@@ -441,6 +463,7 @@ const layer = Layer.effect(
 
     const startSync = Effect.fn("Workspace.startSync")(function* (space: Info) {
       if (!flags.experimentalWorkspaces) return
+      yield* rejectRemoteAdapter(space.type)
 
       const target = yield* WorkspaceAdapterRuntime.target(space).pipe(
         Effect.catch((error) =>
@@ -491,6 +514,7 @@ const layer = Layer.effect(
     })
 
     const create = Effect.fn("Workspace.create")(function* (input: CreateInput) {
+      yield* rejectRemoteAdapter(input.type)
       const id = WorkspaceV2.ID.ascending(input.id)
       const adapter = getAdapter(input.projectID, input.type)
       const config = yield* WorkspaceAdapterRuntime.configure(adapter, {
@@ -573,9 +597,11 @@ const layer = Layer.effect(
         if (current?.workspaceID) {
           const previous = yield* get(current.workspaceID)
           if (previous) {
+            yield* rejectRemoteAdapter(previous.type)
             const target = yield* WorkspaceAdapterRuntime.target(previous)
 
             if (target.type === "remote") {
+              yield* rejectRemote(target.url)
               yield* syncHistory(previous, target.url, target.headers).pipe(
                 Effect.catch((error) =>
                   Effect.logWarning("session warp final source sync failed", {
@@ -639,6 +665,7 @@ const layer = Layer.effect(
             workspaceID,
           })
 
+        yield* rejectRemoteAdapter(space.type)
         const target = yield* WorkspaceAdapterRuntime.target(space)
 
         if (target.type === "local") {
@@ -646,6 +673,7 @@ const layer = Layer.effect(
 
           return
         }
+        yield* rejectRemote(target.url)
 
         const rows = yield* db
           .select({
@@ -730,6 +758,7 @@ const layer = Layer.effect(
     })
 
     const syncList = Effect.fn("Workspace.syncList")(function* (project: Project.Info) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) return yield* list(project)
       const names = new Set((yield* list(project)).map((workspace) => workspace.name))
       const discovered = yield* Effect.forEach(
         registeredAdapters(project.id),
@@ -788,6 +817,10 @@ const layer = Layer.effect(
     })
 
     const remove = Effect.fn("Workspace.remove")(function* (id: WorkspaceV2.ID) {
+      if (Flag.OPENCODE_ENTERPRISE_MODE) {
+        const row = yield* db.select().from(WorkspaceTable).where(eq(WorkspaceTable.id, id)).get().pipe(Effect.orDie)
+        if (row) yield* rejectRemoteAdapter(row.type)
+      }
       const sessions = yield* db
         .select({ id: SessionTable.id, parentID: SessionTable.parent_id })
         .from(SessionTable)
@@ -808,6 +841,7 @@ const layer = Layer.effect(
       yield* stopSync(id)
 
       const info = fromRow(row)
+      yield* rejectRemoteAdapter(info.type)
       yield* Effect.catchCause(
         Effect.gen(function* () {
           yield* WorkspaceAdapterRuntime.remove(info)

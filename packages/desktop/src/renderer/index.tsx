@@ -27,6 +27,7 @@ import { initializationData, initializationReady } from "./initialization"
 import { DesktopFirstLaunchOnboarding } from "./onboarding"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
 import { availableStartupServer, readyWslConnections } from "./wsl/connections"
+import { isLoopbackServerURL } from "./network-policy"
 import "./styles.css"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme/context"
@@ -259,7 +260,7 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
 
       const notification = new Notification(title, {
         body: description ?? "",
-        icon: "https://opencode.ai/favicon-96x96-v3.png",
+        ...(window.__OPENCODE__?.enterpriseMode ? {} : { icon: "https://opencode.ai/favicon-96x96-v3.png" }),
       })
       notification.onclick = () => {
         void window.api.showWindow()
@@ -270,6 +271,9 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     },
 
     fetch: (input, init) => {
+      const url = input instanceof Request ? input.url : input.toString()
+      if (window.__OPENCODE__?.enterpriseMode && !isLoopbackServerURL(url))
+        return Promise.reject(new Error("Outbound network access is disabled in enterprise mode"))
       if (input instanceof Request) return fetch(input)
       return fetch(input, init)
     },
@@ -277,10 +281,12 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     getDefaultServer: async () => {
       const url = await window.api.getDefaultServerUrl().catch(() => null)
       if (!url) return null
+      if (window.__OPENCODE__?.enterpriseMode && !isLoopbackServerURL(url)) return null
       return ServerConnection.Key.make(url)
     },
 
     setDefaultServer: async (url: string | null) => {
+      if (window.__OPENCODE__?.enterpriseMode && url && !isLoopbackServerURL(url)) return
       await window.api.setDefaultServerUrl(url)
     },
 

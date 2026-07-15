@@ -7,7 +7,7 @@ import {
   type DesktopMenuRole,
 } from "@opencode-ai/app/desktop-menu"
 
-import { UPDATER_ENABLED } from "./constants"
+import { ENTERPRISE_MODE, UPDATER_ENABLED } from "./constants"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 
 type Deps = {
@@ -56,7 +56,11 @@ function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOpt
   }
   if (entry.href) {
     const href = entry.href
-    item.click = () => shell.openExternal(href)
+    item.enabled = !ENTERPRISE_MODE
+    item.click = () => {
+      if (ENTERPRISE_MODE) return
+      void shell.openExternal(href)
+    }
   }
 
   return item

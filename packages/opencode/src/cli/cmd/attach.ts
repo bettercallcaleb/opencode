@@ -3,6 +3,8 @@ import { UI } from "@/cli/ui"
 import { errorMessage } from "@opencode-ai/tui/util/error"
 import { validateSession } from "../tui/validate-session"
 import { ServerAuth } from "@/server/auth"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { assertEnterpriseOutboundURL } from "@opencode-ai/core/network/outbound-policy"
 
 export const AttachCommand = cmd({
   command: "attach <url>",
@@ -60,6 +62,11 @@ export const AttachCommand = cmd({
         describe: "cap visible mini replay to the newest N messages",
       }),
   handler: async (args) => {
+    assertEnterpriseOutboundURL(args.url, {
+      enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+      purpose: "local-opencode",
+      allowLocalhost: true,
+    })
     if (args.replay === true) {
       UI.error("--replay is not supported; replay is enabled by default")
       process.exitCode = 1

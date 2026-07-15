@@ -3,6 +3,8 @@ import { Effect, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { WebSocketTracker } from "../websocket-tracker"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { assertEnterpriseOutboundURL } from "@opencode-ai/core/network/outbound-policy"
 
 function requestBody(request: HttpServerRequest.HttpServerRequest) {
   if (request.method === "GET" || request.method === "HEAD") return HttpBody.empty
@@ -17,6 +19,12 @@ export function websocket(
 ): Effect.Effect<HttpServerResponse.HttpServerResponse, never, Socket.WebSocketConstructor> {
   return Effect.scoped(
     Effect.gen(function* () {
+      yield* Effect.sync(() =>
+        assertEnterpriseOutboundURL(target, {
+          enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+          purpose: "forbidden",
+        }),
+      )
       const inbound = yield* Effect.orDie(request.upgrade)
       const outbound = yield* Socket.makeWebSocket(ProxyUtil.websocketTargetURL(target), {
         protocols: ProxyUtil.websocketProtocols(request.headers),
@@ -87,6 +95,12 @@ export function http(
   request: HttpServerRequest.HttpServerRequest,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse> {
   return Effect.gen(function* () {
+    yield* Effect.sync(() =>
+      assertEnterpriseOutboundURL(url, {
+        enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+        purpose: "forbidden",
+      }),
+    )
     const response = yield* client.execute(
       HttpClientRequest.make(request.method as never)(url, {
         headers: ProxyUtil.headers(request.headers as HeadersInit, extra),

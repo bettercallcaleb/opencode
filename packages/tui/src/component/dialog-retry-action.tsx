@@ -6,6 +6,7 @@ import { useDialog, type DialogContext } from "../ui/dialog"
 import { Link } from "../ui/link"
 import { BgPulse } from "./bg-pulse"
 import { useBindings } from "../keymap"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 const GO_URL = "https://opencode.ai/go"
 const PAD_X = 3
@@ -21,7 +22,7 @@ export type DialogRetryActionProps = {
 }
 
 function runAction(props: DialogRetryActionProps, dialog: ReturnType<typeof useDialog>) {
-  if (props.link) open(props.link).catch(() => {})
+  if (props.link && !Flag.OPENCODE_ENTERPRISE_MODE) open(props.link).catch(() => {})
   props.onClose?.()
   dialog.clear()
 }

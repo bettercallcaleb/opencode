@@ -4,6 +4,8 @@ import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { pathKey } from "@/utils/path-key"
 import { ServerScope } from "@/utils/server-scope"
+import { runtimeEnterpriseMode } from "@/telemetry"
+import { isAllowedEnterpriseWebServer } from "@/utils/network-policy"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -276,7 +278,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const url = (x: StoredServer) => (typeof x === "string" ? x : "type" in x ? x.http.url : x.url)
 
     const allServers = createMemo((): Array<ServerConnection.Any> => {
-      return resolveServerList({ stored: store.list, props: props.servers })
+      const servers = resolveServerList({ stored: store.list, props: props.servers })
+      if (!runtimeEnterpriseMode()) return servers
+      return servers.filter(
+        (server) => server.type === "sidecar" || isAllowedEnterpriseWebServer(server.http.url, location.origin),
+      )
     })
 
     const [state, setState] = createStore({
@@ -290,6 +296,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
       if (!url_) return
+      if (runtimeEnterpriseMode() && !isAllowedEnterpriseWebServer(url_, location.origin)) return
       const conn: ServerConnection.Http = { ...input, authToken: undefined, http: { ...input.http, url: url_ } }
       return batch(() => {
         const existing = store.list.findIndex((x) => url(x) === url_)

@@ -25,6 +25,8 @@ import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { assertEnterpriseOutboundURL } from "@opencode-ai/core/network/outbound-policy"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -329,6 +331,13 @@ export const RunCommand = effectCmd({
       }
 
       const replay = args.replay === false ? false : args.replay || args["replay-limit"] !== undefined
+
+      if (args.attach)
+        assertEnterpriseOutboundURL(args.attach, {
+          enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+          purpose: "local-opencode",
+          allowLocalhost: true,
+        })
 
       const root = Filesystem.resolve(process.env.PWD ?? process.cwd())
       const directory = (() => {
