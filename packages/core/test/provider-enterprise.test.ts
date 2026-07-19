@@ -4,6 +4,7 @@ import {
   diagnoseEnterpriseProviderPolicy,
   EnterpriseInferencePolicyError,
   enterpriseInferenceFetch,
+  enterpriseEndpointURL,
   isEnterpriseProviderAllowed,
   normalizeEnterpriseBaseURL,
   parseEnterpriseVllmBaseURL,
@@ -52,6 +53,13 @@ describe("enterprise inference policy", () => {
   test("normalizes only URL syntax and trailing slashes", () => {
     expect(normalizeEnterpriseBaseURL("HTTPS://VLLM.INTERNAL:443/v1///")).toBe("https://vllm.internal/v1")
     expect(normalizeEnterpriseBaseURL("http://vllm.internal:8000/v1/")).toBe("http://vllm.internal:8000/v1")
+  })
+
+  test("appends probe endpoints without dropping the configured base path", () => {
+    expect(enterpriseEndpointURL("https://host/v1", "models").href).toBe("https://host/v1/models")
+    expect(enterpriseEndpointURL("https://host/gateway/openai/v1/", "/chat/completions").href).toBe(
+      "https://host/gateway/openai/v1/chat/completions",
+    )
   })
 
   test("allows only explicit matching OpenAI-compatible providers with models", () => {

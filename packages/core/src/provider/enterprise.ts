@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks"
+
 export const ENTERPRISE_INFERENCE_ERROR = "Only the configured internal vLLM endpoint is allowed in enterprise mode"
 
 export class EnterpriseInferencePolicyError extends Error {
@@ -5,6 +7,25 @@ export class EnterpriseInferencePolicyError extends Error {
     super(ENTERPRISE_INFERENCE_ERROR)
     this.name = "EnterpriseInferencePolicyError"
   }
+}
+
+export function enterpriseEndpointURL(baseURL: string, endpoint: string) {
+  const base = parseEnterpriseVllmBaseURL(baseURL)
+  if (!base) throw new EnterpriseInferencePolicyError()
+  const url = new URL(base)
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${endpoint.replace(/^\/+/, "")}`
+  return url
+}
+
+export type EnterpriseInferenceObserver = {
+  request?: (input: string | URL | Request, init: RequestInit | undefined) => void | Promise<void>
+  response?: (response: unknown) => void | Promise<void>
+}
+
+const observerStorage = new AsyncLocalStorage<EnterpriseInferenceObserver>()
+
+export function withEnterpriseInferenceObserver<T>(observer: EnterpriseInferenceObserver, callback: () => Promise<T>) {
+  return observerStorage.run(observer, callback)
 }
 
 export type EnterpriseProviderPolicyCheck = {
@@ -263,7 +284,10 @@ export async function enterpriseInferenceFetch(
   transport: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
 ) {
   assertEnterpriseRequestURL(input, allowedBaseURL)
+  const observer = observerStorage.getStore()
+  await observer?.request?.(input, init)
   const response = await transport(input, { ...init, redirect: "manual" })
+  await observer?.response?.(response.clone())
   if (response.status >= 300 && response.status < 400) throw new EnterpriseInferencePolicyError()
   return response
 }
