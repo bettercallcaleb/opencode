@@ -46,6 +46,10 @@ interface EffectCmdOpts<Args, A> {
   instance?: boolean | ((args: Args) => boolean)
   /** Defaults to process.cwd(). Override for commands that take a directory positional. */
   directory?: (args: Args) => string
+  /** Prevent configuration bootstrap writes for read-only diagnostic commands. */
+  readOnly?: boolean
+  /** Convert unexpected command/bootstrap failures to this typed CLI exit code. */
+  internalErrorExitCode?: number
   handler: (args: WithDoubleDash<Args>) => Effect.Effect<A, CliError, AppServices | InstanceStore.Service>
 }
 
@@ -84,13 +88,20 @@ export const effectCmd = <Args, A>(opts: EffectCmdOpts<Args, A>) =>
       const { InstanceStore } = await import("@/project/instance-store")
       const { InstanceRef } = await import("@/effect/instance-ref")
       const directory = opts.directory?.(args) ?? process.cwd()
-      const { store, ctx } = await AppRuntime.runPromise(
-        InstanceStore.Service.use((store) => store.load({ directory }).pipe(Effect.map((ctx) => ({ store, ctx })))),
-      )
       try {
-        await AppRuntime.runPromise(opts.handler(args).pipe(Effect.provideService(InstanceRef, ctx)))
-      } finally {
-        await AppRuntime.runPromise(store.dispose(ctx))
+        const { store, ctx } = await AppRuntime.runPromise(
+          InstanceStore.Service.use((store) =>
+            store.load({ directory, configReadOnly: opts.readOnly }).pipe(Effect.map((ctx) => ({ store, ctx }))),
+          ),
+        )
+        try {
+          await AppRuntime.runPromise(opts.handler(args).pipe(Effect.provideService(InstanceRef, ctx)))
+        } finally {
+          await AppRuntime.runPromise(store.dispose(ctx))
+        }
+      } catch (error) {
+        if (opts.internalErrorExitCode === undefined || error instanceof CliError) throw error
+        throw new CliError({ message: "Unexpected internal command failure", exitCode: opts.internalErrorExitCode })
       }
     },
   })

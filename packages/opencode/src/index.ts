@@ -26,9 +26,11 @@ import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
+import { DoctorCommand } from "./cli/cmd/doctor"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
+import { CliError } from "./cli/effect-cmd"
 
 const args = hideBin(process.argv)
 
@@ -101,6 +103,7 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
+  .command(DoctorCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
@@ -111,6 +114,7 @@ const cli = yargs(args)
       cli.showHelp(show)
     }
     if (err) throw err
+    if (args[0] === "doctor") throw new CliError({ message: msg || "Invalid doctor command", exitCode: 2 })
     process.exit(1)
   })
   .strict()
@@ -132,7 +136,7 @@ try {
     UI.error("Unexpected error" + EOL)
     process.stderr.write(errorMessage(e) + EOL)
   }
-  process.exitCode = 1
+  process.exitCode ??= 1
 } finally {
   // Some subprocesses don't react properly to SIGTERM and similar signals.
   // Most notably, some docker-container-based MCP servers don't handle such signals unless

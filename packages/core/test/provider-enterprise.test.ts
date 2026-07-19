@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test"
 import {
   assertEnterpriseRequestURL,
+  diagnoseEnterpriseProviderPolicy,
   EnterpriseInferencePolicyError,
   enterpriseInferenceFetch,
   isEnterpriseProviderAllowed,
@@ -9,6 +10,38 @@ import {
 } from "../src/provider/enterprise"
 
 describe("enterprise inference policy", () => {
+  const legacyAllowed = (input: {
+    npm: string | undefined
+    baseURL: string | undefined
+    models: Record<string, unknown> | undefined
+    allowedBaseURL: string | undefined
+  }) => {
+    if (input.npm !== "@ai-sdk/openai-compatible") return false
+    if (!input.models || Object.keys(input.models).length === 0) return false
+    const configured = normalizeEnterpriseBaseURL(input.baseURL)
+    const allowed = normalizeEnterpriseBaseURL(input.allowedBaseURL)
+    return configured !== undefined && configured === allowed
+  }
+
+  test.each([
+    ["https://host/v1", "https://host/v1"],
+    ["https://host/v1/", "https://host/v1"],
+    ["https://host:443/v1", "https://host/v1"],
+    ["http://host:80/v1", "http://host/v1"],
+    ["https://host:8443/v1", "https://host:8443/v1"],
+    ["https://[2001:db8::1]:8443/v1", "https://[2001:db8::1]:8443/v1"],
+    ["HTTPS://HOST/v1", "https://host/v1"],
+    ["not a URL", "https://host/v1"],
+    ["https://user:password@host/v1", "https://host/v1"],
+    ["https://host/v1?token=x", "https://host/v1"],
+    ["https://host/v1#fragment", "https://host/v1"],
+    ["ftp://host/v1", "ftp://host/v1"],
+    [undefined, "https://host/v1"],
+  ])("preserves legacy admission for %s against %s", (baseURL, allowedBaseURL) => {
+    const input = { npm: "@ai-sdk/openai-compatible", baseURL, models: { model: {} }, allowedBaseURL }
+    expect(isEnterpriseProviderAllowed(input)).toBe(legacyAllowed(input))
+  })
+
   test("missing and malformed base URLs fail closed", () => {
     expect(parseEnterpriseVllmBaseURL(undefined)).toBeUndefined()
     expect(parseEnterpriseVllmBaseURL("not a url")).toBeUndefined()
@@ -49,10 +82,63 @@ describe("enterprise inference policy", () => {
     ).toBe(false)
   })
 
-  test("allows request paths beneath the configured base", () => {
-    expect(assertEnterpriseRequestURL("https://VLLM.INTERNAL/v1/chat/completions", "https://vllm.internal/v1").href).toBe(
-      "https://vllm.internal/v1/chat/completions",
+  test.each([
+    ["https://vllm.internal/v1", "BASE_URL_MATCH"],
+    ["https://vllm.internal/v1/", "BASE_URL_MATCH"],
+    ["http://vllm.internal/v1", "BASE_URL_SCHEME_MISMATCH"],
+    ["https://other.internal/v1", "BASE_URL_HOST_MISMATCH"],
+    ["https://vllm.internal:8443/v1", "BASE_URL_PORT_MISMATCH"],
+    ["https://vllm.internal/v2", "BASE_URL_PATH_MISMATCH"],
+    ["//vllm.internal/v1", "PROVIDER_BASE_URL_INVALID"],
+    ["${VLLM_URL}", "PROVIDER_BASE_URL_UNRESOLVED"],
+    ["{env:VLLM_URL}", "PROVIDER_BASE_URL_UNRESOLVED"],
+  ])("diagnoses provider URL %s with %s", (baseURL, code) => {
+    const result = diagnoseEnterpriseProviderPolicy({
+      npm: "@ai-sdk/openai-compatible",
+      baseURL,
+      models: { llama: {} },
+      allowedBaseURL: "https://vllm.internal/v1",
+    })
+    expect(result.checks.map((check) => check.code)).toContain(code)
+    expect(result.allowed).toBe(code === "BASE_URL_MATCH")
+  })
+
+  test("diagnoses required fields", () => {
+    const result = diagnoseEnterpriseProviderPolicy({
+      npm: undefined,
+      baseURL: undefined,
+      models: {},
+      allowedBaseURL: undefined,
+    })
+    expect(result.checks.map((check) => check.code)).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_NPM_MISSING",
+        "PROVIDER_MODELS_EMPTY",
+        "PROVIDER_BASE_URL_MISSING",
+        "ENTERPRISE_BASE_URL_MISSING",
+      ]),
     )
+  })
+
+  test.each([
+    ["https://user:secret@vllm.internal/v1", "PROVIDER_BASE_URL_CREDENTIALS_REJECTED", "secret"],
+    ["https://vllm.internal/v1?token=secret", "PROVIDER_BASE_URL_QUERY_REJECTED", "token=secret"],
+    ["https://vllm.internal/v1#secret", "PROVIDER_BASE_URL_HASH_REJECTED", "#secret"],
+  ])("redacts rejected URL data", (baseURL, code, secret) => {
+    const result = diagnoseEnterpriseProviderPolicy({
+      npm: "@ai-sdk/openai-compatible",
+      baseURL,
+      models: { llama: {} },
+      allowedBaseURL: "https://vllm.internal/v1",
+    })
+    expect(result.checks.map((check) => check.code)).toContain(code)
+    expect(JSON.stringify(result)).not.toContain(secret)
+  })
+
+  test("allows request paths beneath the configured base", () => {
+    expect(
+      assertEnterpriseRequestURL("https://VLLM.INTERNAL/v1/chat/completions", "https://vllm.internal/v1").href,
+    ).toBe("https://vllm.internal/v1/chat/completions")
   })
 
   test.each([

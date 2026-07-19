@@ -15,6 +15,7 @@ export interface LoadInput {
   directory: string
   worktree?: string
   project?: Project.Info
+  configReadOnly?: boolean
 }
 
 export interface Interface {
@@ -50,12 +51,14 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
                 directory: input.directory,
                 worktree: input.worktree,
                 project: input.project,
+                configReadOnly: input.configReadOnly,
               }
             : yield* project.fromDirectory(input.directory).pipe(
                 Effect.map((result) => ({
                   directory: input.directory,
                   worktree: result.sandbox,
                   project: result.project,
+                  configReadOnly: input.configReadOnly,
                 })),
               )
         yield* bootstrap.run.pipe(Effect.provideService(InstanceRef, ctx))
