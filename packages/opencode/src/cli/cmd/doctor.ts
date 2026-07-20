@@ -18,6 +18,38 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { withEnterpriseInferenceObserver } from "@opencode-ai/core/provider/enterprise"
 import type { InstanceContext } from "@/project/instance-context"
+import { buildDoctorMcpReport, formatDoctorMcpReport } from "./doctor-mcp-report"
+
+export const DoctorMcpCommand = effectCmd({
+  command: "mcp [reference]",
+  describe: "diagnose enterprise MCP managed policy without connecting",
+  readOnly: true,
+  instance: false,
+  internalErrorExitCode: 2,
+  builder: (yargs: Argv) =>
+    yargs
+      .positional("reference", { type: "string", describe: "configured managed-reference alias" })
+      .option("json", { type: "boolean", describe: "print only JSON" })
+      .option("output", { type: "string", describe: "write the complete JSON report to a file" })
+      .option("verbose", { type: "boolean", describe: "include detailed sanitized checks" }),
+  handler: Effect.fn("Cli.doctor.mcp")(function* (args: {
+    reference?: string
+    json?: boolean
+    output?: string
+    verbose?: boolean
+  }) {
+    const config = yield* Config.Service
+    const report = buildDoctorMcpReport({
+      diagnostic: yield* config.loadMcpEnterpriseDiagnostic(process.cwd()),
+      enterpriseMode: Flag.OPENCODE_ENTERPRISE_MODE,
+      requestedReference: args.reference,
+    })
+    const json = JSON.stringify(report, null, 2) + "\n"
+    if (args.output) yield* Effect.promise(() => Bun.write(args.output!, json))
+    process.stdout.write(args.json ? json : formatDoctorMcpReport(report, args.verbose))
+    if (report.summary.status === "fail") process.exitCode = 1
+  }),
+})
 
 export const DoctorVllmCommand = effectCmd({
   command: "vllm [provider]",
@@ -278,6 +310,7 @@ export const DoctorCommand = effectCmd({
   builder: (yargs: Argv) =>
     yargs
       .command(DoctorVllmCommand)
+      .command(DoctorMcpCommand)
       .demandCommand()
       .fail((message, error) => {
         if (error) throw error

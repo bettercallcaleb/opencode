@@ -82,7 +82,12 @@ export const effectCmd = <Args, A>(opts: EffectCmdOpts<Args, A>) =>
       const args = rawArgs as unknown as WithDoubleDash<Args>
       const useInstance = typeof opts.instance === "function" ? opts.instance(args) : opts.instance !== false
       if (!useInstance) {
-        await AppRuntime.runPromise(opts.handler(args))
+        try {
+          await AppRuntime.runPromise(opts.handler(args))
+        } catch (error) {
+          if (opts.internalErrorExitCode === undefined || error instanceof CliError) throw error
+          throw new CliError({ message: "Unexpected internal command failure", exitCode: opts.internalErrorExitCode })
+        }
         return
       }
       const { InstanceStore } = await import("@/project/instance-store")

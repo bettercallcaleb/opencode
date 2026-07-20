@@ -137,6 +137,7 @@ function mcp(info: typeof ConfigV1.Info.Type) {
 
 function migrateMcp(info: ConfigMCPV1.Info) {
   const disabled = info.enabled === undefined ? undefined : !info.enabled
+  if (info.type === "managed") return { type: info.type, server: info.server, disabled }
   if (info.type === "local")
     return {
       type: info.type,

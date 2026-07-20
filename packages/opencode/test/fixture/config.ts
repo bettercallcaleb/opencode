@@ -7,6 +7,10 @@ export function make(overrides: Partial<Config.Interface> = {}) {
     get: () => Effect.succeed({}),
     getGlobal: () => Effect.succeed({}),
     getConsoleState: () => Effect.succeed(emptyConsoleState),
+    mcpEnterpriseDiagnostic: () =>
+      Effect.succeed({ policyFieldSources: {}, unmanagedPolicySources: [], references: {}, referenceSources: {} }),
+    loadMcpEnterpriseDiagnostic: () =>
+      Effect.succeed({ policyFieldSources: {}, unmanagedPolicySources: [], references: {}, referenceSources: {} }),
     update: () => Effect.void,
     updateGlobal: (config) => Effect.succeed({ info: config, changed: false }),
     invalidate: () => Effect.void,

@@ -3,6 +3,13 @@ export * as ConfigMCPV1 from "./mcp"
 import { Schema } from "effect"
 import { PositiveInt } from "../../schema"
 
+export const Managed = Schema.Struct({
+  type: Schema.Literal("managed").annotate({ description: "Reference to an administrator-managed MCP server" }),
+  server: Schema.NonEmptyString.annotate({ description: "Administrator-managed MCP server ID" }),
+  enabled: Schema.optional(Schema.Boolean),
+}).annotate({ identifier: "McpManagedReference", parseOptions: { onExcessProperty: "error" } })
+export type Managed = Schema.Schema.Type<typeof Managed>
+
 export const Local = Schema.Struct({
   type: Schema.Literal("local").annotate({ description: "Type of MCP server connection" }),
   command: Schema.mutable(Schema.Array(Schema.String)).annotate({
@@ -59,5 +66,5 @@ export const Remote = Schema.Struct({
 }).annotate({ identifier: "McpRemoteConfig" })
 export type Remote = Schema.Schema.Type<typeof Remote>
 
-export const Info = Schema.Union([Local, Remote]).annotate({ discriminator: "type" })
+export const Info = Schema.Union([Local, Remote, Managed]).annotate({ discriminator: "type" })
 export type Info = Schema.Schema.Type<typeof Info>

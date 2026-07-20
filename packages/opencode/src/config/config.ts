@@ -19,11 +19,12 @@ import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
 import { InstanceRef } from "@/effect/instance-ref"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
+import type { ConfigMCPEnterprisePolicyV1 } from "@opencode-ai/core/v1/config/mcp-enterprise-policy"
 import { RemoteAuthError } from "@opencode-ai/core/v1/config/error"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
@@ -120,12 +121,38 @@ type State = {
   directories: string[]
   deps: Fiber.Fiber<void>[]
   consoleState: ConsoleState
+  mcpEnterprise: MCPEnterpriseDiagnostic
+}
+
+export type MCPConfigSource = {
+  kind:
+    | "managed-file"
+    | "managed-preference"
+    | "global"
+    | "project"
+    | "inline"
+    | "custom-config"
+    | "custom-config-directory"
+    | "remote"
+  source: string
+}
+
+export type MCPEnterpriseDiagnostic = {
+  managedPolicy?: ConfigMCPEnterprisePolicyV1.Info
+  policySource?: MCPConfigSource
+  policyFieldSources: Record<string, MCPConfigSource>
+  unmanagedPolicySources: MCPConfigSource[]
+  references: NonNullable<ConfigV1.Info["mcp"]>
+  referenceSources: Record<string, MCPConfigSource>
+  configurationInvalid?: boolean
 }
 
 export interface Interface {
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
+  readonly mcpEnterpriseDiagnostic: () => Effect.Effect<MCPEnterpriseDiagnostic>
+  readonly loadMcpEnterpriseDiagnostic: (directory: string) => Effect.Effect<MCPEnterpriseDiagnostic>
   readonly update: (config: Info) => Effect.Effect<void>
   readonly updateGlobal: (config: Info) => Effect.Effect<{ info: Info; changed: boolean }>
   readonly invalidate: () => Effect.Effect<void>
@@ -323,13 +350,18 @@ const layer = Layer.effect(
     })
 
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(
-      function* (ctx: InstanceContext) {
+      function* (ctx: Pick<InstanceContext, "directory" | "worktree" | "configReadOnly">) {
         const auth = yield* authSvc.all().pipe(Effect.orDie)
 
         let result: Info = {}
         const authEnv: Record<string, string> = {}
         const consoleManagedProviders = new Set<string>()
         let activeOrgName: string | undefined
+        let managedMcpPolicy: ConfigMCPEnterprisePolicyV1.Info | undefined
+        let managedMcpPolicySource: MCPConfigSource | undefined
+        const managedMcpPolicyFieldSources: Record<string, MCPConfigSource> = {}
+        const unmanagedMcpPolicySources: MCPConfigSource[] = []
+        const mcpReferenceSources: Record<string, MCPConfigSource> = {}
 
         const pluginScopeForSource = Effect.fnUntraced(function* (source: string) {
           if (source.startsWith("http://") || source.startsWith("https://")) return "global"
@@ -360,8 +392,32 @@ const layer = Layer.effect(
           result.plugin_origins = plugins
         })
 
-        const merge = (source: string, next: Info, kind?: ConfigPlugin.Scope) => {
+        const merge = (
+          source: string,
+          next: Info,
+          kind?: ConfigPlugin.Scope,
+          mcpSource: MCPConfigSource = { kind: kind === "local" ? "project" : "global", source },
+        ) => {
           result = mergeConfigConcatArrays(result, next)
+          if (next.enterprise?.mcp) {
+            if (mcpSource.kind === "managed-file" || mcpSource.kind === "managed-preference") {
+              managedMcpPolicy = mergeDeep(managedMcpPolicy ?? {}, next.enterprise.mcp) as ConfigMCPEnterprisePolicyV1.Info
+              managedMcpPolicySource = mcpSource
+              const visit = (value: unknown, prefix: string) => {
+                if (!value || typeof value !== "object" || Array.isArray(value)) {
+                  managedMcpPolicyFieldSources[prefix] = mcpSource
+                  return
+                }
+                for (const [key, item] of Object.entries(value)) visit(item, prefix ? `${prefix}.${key}` : key)
+              }
+              visit(next.enterprise.mcp, "enterprise.mcp")
+            } else {
+              unmanagedMcpPolicySources.push(mcpSource)
+            }
+          }
+          for (const [name, reference] of Object.entries(next.mcp ?? {})) {
+            if (!mcpReferenceSources[name] || "type" in reference) mcpReferenceSources[name] = mcpSource
+          }
           return mergePluginOrigins(source, next.plugin, kind)
         }
 
@@ -406,22 +462,25 @@ const layer = Layer.effect(
               },
               authEnv,
             )
-            yield* merge(source, next, "global")
+            yield* merge(source, next, "global", { kind: "remote", source })
             yield* Effect.logDebug("loaded remote config from well-known", { url })
           }
         }
 
         const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
-        yield* merge(Global.Path.config, global, "global")
+        yield* merge(Global.Path.config, global, "global", { kind: "global", source: Global.Path.config })
 
         if (Flag.OPENCODE_CONFIG) {
-          yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv))
+          yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv), undefined, {
+            kind: "custom-config",
+            source: Flag.OPENCODE_CONFIG,
+          })
           yield* Effect.logDebug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
         }
 
         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
           for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
-            yield* merge(file, yield* loadFile(file, authEnv), "local")
+            yield* merge(file, yield* loadFile(file, authEnv), "local", { kind: "project", source: file })
           }
         }
 
@@ -442,7 +501,10 @@ const layer = Layer.effect(
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(dir, file)
               yield* Effect.logDebug(`loading config from ${source}`)
-              yield* merge(source, yield* loadFile(source, authEnv))
+              yield* merge(source, yield* loadFile(source, authEnv), undefined, {
+                kind: dir === Flag.OPENCODE_CONFIG_DIR ? "custom-config-directory" : "project",
+                source,
+              })
               result.agent ??= {}
               result.mode ??= {}
               result.plugin ??= []
@@ -491,7 +553,7 @@ const layer = Layer.effect(
             dir: ctx.directory,
             source,
           })
-          yield* merge(source, next, "local")
+          yield* merge(source, next, "local", { kind: "inline", source })
           yield* Effect.logDebug("loaded custom config from OPENCODE_CONFIG_CONTENT")
         }
 
@@ -522,7 +584,7 @@ const layer = Layer.effect(
               for (const providerID of Object.keys(next.provider ?? {})) {
                 consoleManagedProviders.add(providerID)
               }
-              yield* merge(source, next, "global")
+              yield* merge(source, next, "global", { kind: "remote", source })
             }
           }).pipe(
             Effect.withSpan("Config.loadActiveOrgConfig"),
@@ -538,20 +600,18 @@ const layer = Layer.effect(
         if (existsSync(managedDir)) {
           for (const file of ["opencode.json", "opencode.jsonc"]) {
             const source = path.join(managedDir, file)
-            yield* merge(source, yield* loadFile(source), "global")
+            yield* merge(source, yield* loadFile(source), "global", { kind: "managed-file", source })
           }
         }
 
         // macOS managed preferences (.mobileconfig deployed via MDM) override everything
         const managed = yield* Effect.promise(() => ConfigManaged.readManagedPreferences())
         if (managed) {
-          result = mergeConfigConcatArrays(
-            result,
-            yield* loadConfig(managed.text, {
+          const next = yield* loadConfig(managed.text, {
               dir: path.dirname(managed.source),
               source: managed.source,
-            }),
-          )
+            })
+          yield* merge(managed.source, next, "global", { kind: "managed-preference", source: managed.source })
         }
 
         for (const [name, mode] of Object.entries(result.mode ?? {})) {
@@ -613,6 +673,14 @@ const layer = Layer.effect(
             activeOrgName,
             switchableOrgCount: 0,
           },
+          mcpEnterprise: {
+            managedPolicy: managedMcpPolicy,
+            policySource: managedMcpPolicySource,
+            policyFieldSources: managedMcpPolicyFieldSources,
+            unmanagedPolicySources: unmanagedMcpPolicySources,
+            references: result.mcp ?? {},
+            referenceSources: mcpReferenceSources,
+          },
         }
       },
       Effect.provideService(FSUtil.Service, fs),
@@ -634,6 +702,42 @@ const layer = Layer.effect(
 
     const getConsoleState = Effect.fn("Config.getConsoleState")(function* () {
       return yield* InstanceState.use(state, (s) => s.consoleState)
+    })
+
+    const mcpEnterpriseDiagnostic = Effect.fn("Config.mcpEnterpriseDiagnostic")(function* () {
+      return yield* InstanceState.use(state, (s) => s.mcpEnterprise)
+    })
+
+    const loadMcpEnterpriseDiagnostic = Effect.fn("Config.loadMcpEnterpriseDiagnostic")(function* (directory: string) {
+      const resolved = path.resolve(directory)
+      const worktree = (() => {
+        let current = resolved
+        while (true) {
+          if (existsSync(path.join(current, ".git"))) return current
+          const parent = path.dirname(current)
+          if (parent === current) return current
+          current = parent
+        }
+      })()
+      return yield* loadInstanceState({ directory: resolved, worktree, configReadOnly: true }).pipe(
+        Effect.map((loaded) => loaded.mcpEnterprise),
+        Effect.catchCause((cause) => {
+          const error = Cause.squash(cause)
+          if (
+            error instanceof Error &&
+            (error.name === "ConfigInvalidError" || error.name === "ConfigJsonError")
+          )
+            return Effect.succeed({
+              policyFieldSources: {},
+              unmanagedPolicySources: [],
+              references: {},
+              referenceSources: {},
+              configurationInvalid: true,
+            } satisfies MCPEnterpriseDiagnostic)
+          return Effect.failCause(cause)
+        }),
+        Effect.orDie,
+      )
     })
 
     const waitForDependencies = Effect.fn("Config.waitForDependencies")(function* () {
@@ -684,6 +788,8 @@ const layer = Layer.effect(
       get,
       getGlobal,
       getConsoleState,
+      mcpEnterpriseDiagnostic,
+      loadMcpEnterpriseDiagnostic,
       update,
       updateGlobal,
       invalidate,

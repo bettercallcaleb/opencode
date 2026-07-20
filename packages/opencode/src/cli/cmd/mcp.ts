@@ -158,7 +158,12 @@ export const McpListCommand = effectCmd({
         hint = "\n    " + status.error
       }
 
-      const typeHint = serverConfig.type === "remote" ? serverConfig.url : serverConfig.command.join(" ")
+      const typeHint =
+        serverConfig.type === "remote"
+          ? serverConfig.url
+          : serverConfig.type === "local"
+            ? serverConfig.command.join(" ")
+            : `managed:${serverConfig.server}`
       prompts.log.info(
         `${statusIcon} ${name} ${UI.Style.TEXT_DIM}${statusText}${hint}\n    ${UI.Style.TEXT_DIM}${typeHint}`,
       )

@@ -11,6 +11,7 @@ import { ConfigFormatterV1 } from "./formatter"
 import { ConfigLayoutV1 } from "./layout"
 import { ConfigLSPV1 } from "./lsp"
 import { ConfigMCPV1 } from "./mcp"
+import { ConfigMCPEnterprisePolicyV1 } from "./mcp-enterprise-policy"
 import { ConfigPermissionV1 } from "./permission"
 import { ConfigPluginV1 } from "./plugin"
 import { ConfigProviderV1 } from "./provider"
@@ -128,7 +129,12 @@ export const Info = Schema.Struct({
     description: "Attachment processing configuration, including image size limits and resizing behavior",
   }),
   enterprise: Schema.optional(
-    Schema.Struct({ url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }) }),
+    Schema.Struct({
+      url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
+      mcp: Schema.optional(ConfigMCPEnterprisePolicyV1.Info).annotate({
+        description: "Administrator-managed enterprise MCP admission policy",
+      }),
+    }),
   ),
   tool_output: Schema.optional(
     Schema.Struct({

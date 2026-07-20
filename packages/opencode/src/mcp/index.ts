@@ -124,6 +124,10 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCPV1.Info {
   return typeof entry === "object" && entry !== null && "type" in entry
 }
 
+function timeoutOf(entry: ConfigMCPV1.Info | undefined) {
+  return entry && entry.type !== "managed" ? entry.timeout : undefined
+}
+
 function remoteURL(value: string) {
   if (URL.canParse(value)) return new URL(value)
 }
@@ -379,6 +383,8 @@ const layer = Layer.effect(
     const create = Effect.fn("MCP.create")(
       function* (key: string, mcp: ConfigMCPV1.Info) {
         if (Flag.OPENCODE_ENTERPRISE_MODE) return DISABLED_RESULT
+        // Managed references are Phase 1 policy inputs only and never create a transport.
+        if (mcp.type === "managed") return DISABLED_RESULT
         if (mcp.enabled === false) {
           return DISABLED_RESULT
         }
@@ -531,7 +537,7 @@ const layer = Layer.effect(
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
                 if (result.instructions) s.instructions[key] = result.instructions
-                watch(s, key, result.mcpClient, bridge, mcp.timeout)
+                watch(s, key, result.mcpClient, bridge, timeoutOf(mcp))
               }
             }),
           { concurrency: "unbounded" },
@@ -656,7 +662,7 @@ const layer = Layer.effect(
         return result.status
       }
 
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, mcp.timeout)
+      return yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, timeoutOf(mcp))
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
@@ -683,8 +689,8 @@ const layer = Layer.effect(
     })
 
     function requestTimeout(s: State, name: string, configured: McpEntry | undefined, fallback?: number) {
-      const staticTimeout = configured && isMcpConfigured(configured) ? configured.timeout : undefined
-      return s.config[name]?.timeout ?? staticTimeout ?? fallback
+      const staticTimeout = configured && isMcpConfigured(configured) ? timeoutOf(configured) : undefined
+      return timeoutOf(s.config[name]) ?? staticTimeout ?? fallback
     }
 
     const tools = Effect.fn("MCP.tools")(function* () {
@@ -913,7 +919,7 @@ const layer = Layer.effect(
 
         const listed = client
           ? client.getServerCapabilities()?.tools
-            ? yield* McpCatalog.defs(client, mcpConfig.timeout)
+            ? yield* McpCatalog.defs(client, timeoutOf(mcpConfig))
             : []
           : undefined
         if (!client || !listed) {
@@ -923,7 +929,7 @@ const layer = Layer.effect(
 
         const s = yield* InstanceState.get(state)
         yield* auth.clearOAuthState(mcpName)
-        return yield* storeClient(s, mcpName, client, listed, client.getInstructions()?.trim(), mcpConfig.timeout)
+        return yield* storeClient(s, mcpName, client, listed, client.getInstructions()?.trim(), timeoutOf(mcpConfig))
       }
 
       const callbackPromise = McpOAuthCallback.waitForCallback(result.oauthState, mcpName)

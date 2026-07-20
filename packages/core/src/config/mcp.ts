@@ -40,7 +40,13 @@ export class Remote extends Schema.Class<Remote>("ConfigV2.MCP.Remote")({
   timeout: Timeout.pipe(Schema.optional),
 }) {}
 
-export const Server = Schema.Union([Local, Remote]).pipe(Schema.toTaggedUnion("type"))
+export class Managed extends Schema.Class<Managed>("ConfigV2.MCP.Managed")({
+  type: Schema.Literal("managed"),
+  server: Schema.NonEmptyString,
+  disabled: Schema.Boolean.pipe(Schema.optional),
+}) {}
+
+export const Server = Schema.Union([Local, Remote, Managed]).pipe(Schema.toTaggedUnion("type"))
 
 export class Info extends Schema.Class<Info>("ConfigV2.MCP")({
   timeout: Timeout.pipe(Schema.optional),
