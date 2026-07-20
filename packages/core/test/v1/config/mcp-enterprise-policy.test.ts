@@ -29,9 +29,20 @@ const policy = {
   projectReferences: true,
   audit: { mode: "decisions" as const, includeArguments: false, includeOutput: false },
   limits: {
-    connectTimeoutMs: 10_000, requestTimeoutMs: 30_000, maxResponseBytes: 2_097_152,
-    maxTextBytes: 1_048_576, maxSchemaBytes: 262_144, maxListItems: 500, maxAttachments: 4,
-    maxAttachmentBytes: 10_485_760, maxAttachmentTotalBytes: 20_971_520,
+    connectTimeoutMs: 10_000,
+    requestTimeoutMs: 30_000,
+    maxResponseBytes: 2_097_152,
+    responseHeaderTimeoutMs: 10_000,
+    streamInactivityTimeoutMs: 30_000,
+    maxRequestBytes: 1_048_576,
+    maxHeaderBytes: 16_384,
+    maxStreamFrameBytes: 262_144,
+    maxTextBytes: 1_048_576,
+    maxSchemaBytes: 262_144,
+    maxListItems: 500,
+    maxAttachments: 4,
+    maxAttachmentBytes: 10_485_760,
+    maxAttachmentTotalBytes: 20_971_520,
   },
   servers: { "source-control": server },
 }
@@ -42,7 +53,9 @@ const succeeds = (schema: Schema.Decoder<unknown, never>, value: unknown) =>
 describe("enterprise MCP configuration schemas", () => {
   test("accepts only a narrow managed reference", () => {
     expect(succeeds(ConfigMCPV1.Managed, { type: "managed", server: "source-control", enabled: true })).toBe(true)
-    expect(succeeds(ConfigMCPV1.Managed, { type: "managed", server: "source-control", url: "https://evil" })).toBe(false)
+    expect(succeeds(ConfigMCPV1.Managed, { type: "managed", server: "source-control", url: "https://evil" })).toBe(
+      false,
+    )
     expect(succeeds(ConfigMCPV1.Managed, { type: "managed", server: "" })).toBe(false)
     for (const key of ["command", "headers", "environment", "oauth", "timeout", "transport", "capabilities", "limits"])
       expect(succeeds(ConfigMCPV1.Managed, { type: "managed", server: "source-control", [key]: {} })).toBe(false)
@@ -59,10 +72,33 @@ describe("enterprise MCP configuration schemas", () => {
     [{ ...policy, servers: { x: { ...server, unknown: true } } }],
     [{ ...policy, servers: { x: { ...server, dns: { ...server.dns, unknown: true } } } }],
     [{ ...policy, servers: { x: { ...server, headers: { ...server.headers, unknown: true } } } }],
-    [{ ...policy, servers: { x: { ...server, headers: { ...server.headers, values: { authorization: { ...server.headers.values.authorization, unknown: true } } } } } }],
+    [
+      {
+        ...policy,
+        servers: {
+          x: {
+            ...server,
+            headers: {
+              ...server.headers,
+              values: { authorization: { ...server.headers.values.authorization, unknown: true } },
+            },
+          },
+        },
+      },
+    ],
     [{ ...policy, servers: { x: { ...server, oauth: { ...server.oauth, unknown: true } } } }],
     [{ ...policy, servers: { x: { ...server, capabilities: { ...server.capabilities, unknown: true } } } }],
-    [{ ...policy, servers: { x: { ...server, capabilities: { ...server.capabilities, tools: { ...server.capabilities.tools, unknown: true } } } } }],
+    [
+      {
+        ...policy,
+        servers: {
+          x: {
+            ...server,
+            capabilities: { ...server.capabilities, tools: { ...server.capabilities.tools, unknown: true } },
+          },
+        },
+      },
+    ],
     [{ ...policy, servers: { x: { ...server, runtime: { ...server.runtime, unknown: true } } } }],
   ])("rejects unknown fields recursively", (value) => {
     expect(succeeds(ConfigMCPEnterprisePolicyV1.Info, value)).toBe(false)
@@ -75,7 +111,15 @@ describe("enterprise MCP configuration schemas", () => {
     [{ ...policy, servers: { x: { ...server, redirects: "follow" } } }, "unsafe redirects"],
     [{ ...policy, servers: { x: { ...server, oauth: { allowed: true } } } }, "OAuth"],
     [{ ...policy, servers: { x: { ...server, transport: "auto" } } }, "unpinned transport"],
-    [{ ...policy, servers: { x: { ...server, headers: { allowedNames: ["authorization"], values: { authorization: "literal-secret" } } } } }, "literal secret"],
+    [
+      {
+        ...policy,
+        servers: {
+          x: { ...server, headers: { allowedNames: ["authorization"], values: { authorization: "literal-secret" } } },
+        },
+      },
+      "literal secret",
+    ],
   ])("rejects %s", (value) => expect(succeeds(ConfigMCPEnterprisePolicyV1.Info, value)).toBe(false))
 })
 

@@ -3,24 +3,68 @@ import type { ConfigMCPV1 } from "@opencode-ai/core/v1/config/mcp"
 import type { MCPConfigSource } from "@/config/config"
 
 export const DiagnosticCodes = [
-  "MCP_ENTERPRISE_MODE_ENABLED", "MCP_ENTERPRISE_MODE_DISABLED", "MCP_POLICY_PRESENT", "MCP_POLICY_MISSING",
-  "MCP_POLICY_MANAGED", "MCP_POLICY_NOT_MANAGED", "MCP_POLICY_MODE_DIAGNOSE", "MCP_POLICY_MODE_UNSUPPORTED",
-  "MCP_OPERATIONALLY_DISABLED", "MCP_REFERENCE_DECLARED", "MCP_REFERENCE_UNKNOWN", "MCP_REFERENCE_DISABLED",
-  "MCP_REFERENCE_ALLOWED", "MCP_REFERENCE_FIELDS_INVALID", "MCP_PROJECT_REFERENCES_ALLOWED",
-  "MCP_PROJECT_REFERENCES_PROHIBITED", "MCP_DEFINITION_UNMANAGED", "MCP_SERVER_FOUND", "MCP_SERVER_DISABLED",
-  "MCP_SERVER_KIND_REMOTE", "MCP_LOCAL_PROHIBITED", "MCP_URL_PRESENT", "MCP_URL_INVALID",
-  "MCP_URL_CREDENTIALS_REJECTED", "MCP_URL_QUERY_REJECTED", "MCP_URL_FRAGMENT_REJECTED",
-  "MCP_URL_SCHEME_REJECTED", "MCP_TRANSPORT_PINNED", "MCP_TRANSPORT_NOT_PINNED", "MCP_TRANSPORT_UNSUPPORTED",
-  "MCP_REDIRECT_POLICY_SAFE", "MCP_REDIRECT_POLICY_UNSAFE", "MCP_OAUTH_PROHIBITED", "MCP_OAUTH_UNSAFE",
-  "MCP_HEADER_ALLOWED", "MCP_HEADER_NOT_ALLOWED", "MCP_SECRET_REFERENCE_VALID", "MCP_SECRET_REFERENCE_INVALID",
-  "MCP_LITERAL_SECRET_REJECTED", "MCP_CAPABILITY_TOOLS_EXPLICIT", "MCP_CAPABILITY_RESOURCES_EXPLICIT",
-  "MCP_CAPABILITY_PROMPTS_EXPLICIT", "MCP_CAPABILITY_INSTRUCTIONS_EXPLICIT", "MCP_CAPABILITY_LOGGING_EXPLICIT",
-  "MCP_CAPABILITY_NOT_EXPLICIT", "MCP_TOOL_ALLOWLIST_PRESENT", "MCP_TOOL_ALLOWLIST_EMPTY",
-  "MCP_DYNAMIC_TOOL_POLICY_PRESENT", "MCP_LIMIT_VALID", "MCP_LIMIT_OUT_OF_RANGE", "MCP_NAME_VALID",
-  "MCP_NAME_COLLISION", "MCP_POLICY_SOURCE_MANAGED_FILE", "MCP_POLICY_SOURCE_MANAGED_PREFERENCE",
-  "MCP_POLICY_SOURCE_UNTRUSTED", "MCP_REFERENCE_SOURCE_PROJECT", "MCP_REFERENCE_SOURCE_GLOBAL",
-  "MCP_REFERENCE_SOURCE_INLINE", "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG", "MCP_REFERENCE_SOURCE_MANAGED",
-  "MCP_DNS_POLICY_VALID", "MCP_DNS_POLICY_INVALID",
+  "MCP_ENTERPRISE_MODE_ENABLED",
+  "MCP_ENTERPRISE_MODE_DISABLED",
+  "MCP_POLICY_PRESENT",
+  "MCP_POLICY_MISSING",
+  "MCP_POLICY_MANAGED",
+  "MCP_POLICY_NOT_MANAGED",
+  "MCP_POLICY_MODE_DIAGNOSE",
+  "MCP_POLICY_MODE_UNSUPPORTED",
+  "MCP_OPERATIONALLY_DISABLED",
+  "MCP_REFERENCE_DECLARED",
+  "MCP_REFERENCE_UNKNOWN",
+  "MCP_REFERENCE_DISABLED",
+  "MCP_REFERENCE_ALLOWED",
+  "MCP_REFERENCE_FIELDS_INVALID",
+  "MCP_PROJECT_REFERENCES_ALLOWED",
+  "MCP_PROJECT_REFERENCES_PROHIBITED",
+  "MCP_DEFINITION_UNMANAGED",
+  "MCP_SERVER_FOUND",
+  "MCP_SERVER_DISABLED",
+  "MCP_SERVER_KIND_REMOTE",
+  "MCP_LOCAL_PROHIBITED",
+  "MCP_URL_PRESENT",
+  "MCP_URL_INVALID",
+  "MCP_URL_CREDENTIALS_REJECTED",
+  "MCP_URL_QUERY_REJECTED",
+  "MCP_URL_FRAGMENT_REJECTED",
+  "MCP_URL_SCHEME_REJECTED",
+  "MCP_TRANSPORT_PINNED",
+  "MCP_TRANSPORT_NOT_PINNED",
+  "MCP_TRANSPORT_UNSUPPORTED",
+  "MCP_REDIRECT_POLICY_SAFE",
+  "MCP_REDIRECT_POLICY_UNSAFE",
+  "MCP_OAUTH_PROHIBITED",
+  "MCP_OAUTH_UNSAFE",
+  "MCP_HEADER_ALLOWED",
+  "MCP_HEADER_NOT_ALLOWED",
+  "MCP_SECRET_REFERENCE_VALID",
+  "MCP_SECRET_REFERENCE_INVALID",
+  "MCP_LITERAL_SECRET_REJECTED",
+  "MCP_CAPABILITY_TOOLS_EXPLICIT",
+  "MCP_CAPABILITY_RESOURCES_EXPLICIT",
+  "MCP_CAPABILITY_PROMPTS_EXPLICIT",
+  "MCP_CAPABILITY_INSTRUCTIONS_EXPLICIT",
+  "MCP_CAPABILITY_LOGGING_EXPLICIT",
+  "MCP_CAPABILITY_NOT_EXPLICIT",
+  "MCP_TOOL_ALLOWLIST_PRESENT",
+  "MCP_TOOL_ALLOWLIST_EMPTY",
+  "MCP_DYNAMIC_TOOL_POLICY_PRESENT",
+  "MCP_LIMIT_VALID",
+  "MCP_LIMIT_OUT_OF_RANGE",
+  "MCP_NAME_VALID",
+  "MCP_NAME_COLLISION",
+  "MCP_POLICY_SOURCE_MANAGED_FILE",
+  "MCP_POLICY_SOURCE_MANAGED_PREFERENCE",
+  "MCP_POLICY_SOURCE_UNTRUSTED",
+  "MCP_REFERENCE_SOURCE_PROJECT",
+  "MCP_REFERENCE_SOURCE_GLOBAL",
+  "MCP_REFERENCE_SOURCE_INLINE",
+  "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG",
+  "MCP_REFERENCE_SOURCE_MANAGED",
+  "MCP_DNS_POLICY_VALID",
+  "MCP_DNS_POLICY_INVALID",
 ] as const
 
 export type DiagnosticCode = (typeof DiagnosticCodes)[number]
@@ -42,6 +86,78 @@ export type AdmissionInput = {
   requestedReference?: string
   platform: NodeJS.Platform
   configurationInvalid?: boolean
+}
+
+const admittedEnterpriseMcpServer = Symbol("AdmittedEnterpriseMcpServer")
+const admittedEnterpriseMcpServers = new WeakSet<object>()
+
+export type AdmittedEnterpriseMcpServer = Readonly<{
+  [admittedEnterpriseMcpServer]: true
+  id: string
+  alias: string
+  url: string
+  transport: "streamable-http"
+  dns: Readonly<{
+    allowedCidrs: readonly string[]
+    denyLoopback: boolean
+    denyLinkLocal: boolean
+  }>
+  headers: Readonly<{
+    allowedNames: readonly string[]
+    secretReferences: readonly Readonly<{
+      header: string
+      source: "environment"
+      name: string
+      format: "Bearer" | "Raw"
+    }>[]
+  }>
+  limits: Readonly<ConfigMCPEnterprisePolicyV1.Info["limits"]>
+}>
+
+export function admitEnterpriseMcpHttpServer(input: AdmissionInput, alias: string): AdmittedEnterpriseMcpServer {
+  const diagnostic = diagnoseEnterpriseMcp({ ...input, requestedReference: alias })
+  const reference = diagnostic.references[0]
+  if (
+    !input.enterpriseMode ||
+    diagnostic.summary.status !== "pass" ||
+    reference?.status !== "pass" ||
+    !reference.server
+  )
+    throw new Error("Enterprise MCP server admission failed.")
+  const server = input.policy?.servers[reference.server]
+  if (!server || server.transport !== "streamable-http" || !input.policy)
+    throw new Error("Enterprise MCP server is not admitted for Streamable HTTP.")
+  const admitted = {
+    [admittedEnterpriseMcpServer]: true as const,
+    id: reference.server,
+    alias,
+    url: sanitizeServer(server).url,
+    transport: "streamable-http" as const,
+    dns: {
+      allowedCidrs: [...server.dns.allowedCidrs],
+      denyLoopback: server.dns.denyLoopback,
+      denyLinkLocal: server.dns.denyLinkLocal,
+    },
+    headers: {
+      allowedNames: server.headers.allowedNames.map((name) => name.toLowerCase()).sort(),
+      secretReferences: Object.entries(server.headers.values)
+        .map(([header, value]) => ({
+          header: header.toLowerCase(),
+          source: value.source,
+          name: value.name,
+          format: value.format,
+        }))
+        .sort((a, b) => a.header.localeCompare(b.header)),
+    },
+    limits: { ...input.policy.limits },
+  }
+  Object.defineProperty(admitted, admittedEnterpriseMcpServer, { value: true, enumerable: false })
+  admittedEnterpriseMcpServers.add(admitted)
+  return deepFreeze(admitted)
+}
+
+export function isAdmittedEnterpriseMcpServer(value: unknown): value is AdmittedEnterpriseMcpServer {
+  return typeof value === "object" && value !== null && admittedEnterpriseMcpServers.has(value)
 }
 
 export function diagnoseEnterpriseMcp(input: AdmissionInput) {
@@ -99,9 +215,7 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     }
   }
 
-  const names = input.requestedReference
-    ? [input.requestedReference]
-    : Object.keys(input.references).sort()
+  const names = input.requestedReference ? [input.requestedReference] : Object.keys(input.references).sort()
   const normalizedAliases = new Map<string, string>()
   const serverAliases = new Map<string, string>()
   const references = names.map((alias) => {
@@ -144,7 +258,10 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
       referenceChecks.push(fail("MCP_PROJECT_REFERENCES_PROHIBITED", "Policy prohibits non-managed references."))
     else
       referenceChecks.push(
-        pass("MCP_PROJECT_REFERENCES_ALLOWED", managedSource ? "Managed reference is allowed." : "Project references are allowed."),
+        pass(
+          "MCP_PROJECT_REFERENCES_ALLOWED",
+          managedSource ? "Managed reference is allowed." : "Project references are allowed.",
+        ),
       )
     const server = input.policy.servers[value.server]
     if (!server) {
@@ -153,7 +270,8 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     }
     referenceChecks.push(pass("MCP_SERVER_FOUND", "Managed server policy was found."))
     referenceChecks.push(pass("MCP_SERVER_KIND_REMOTE", "Server kind is remote."))
-    if (server.enabled === false) referenceChecks.push(fail("MCP_SERVER_DISABLED", "Managed server policy is disabled."))
+    if (server.enabled === false)
+      referenceChecks.push(fail("MCP_SERVER_DISABLED", "Managed server policy is disabled."))
     referenceChecks.push(...diagnoseServer(server))
     if (!referenceChecks.some((check) => check.status === "fail"))
       referenceChecks.push(pass("MCP_REFERENCE_ALLOWED", "Reference passes Phase 1 admission diagnostics."))
@@ -209,7 +327,8 @@ function diagnoseServer(server: ConfigMCPEnterprisePolicyV1.RemoteServer) {
   const seenValues = new Set<string>()
   for (const [name, secret] of Object.entries(server.headers.values)) {
     const normalized = name.toLowerCase()
-    if (seenValues.has(normalized)) checks.push(fail("MCP_NAME_COLLISION", `Header ${safe(normalized)} has colliding values.`))
+    if (seenValues.has(normalized))
+      checks.push(fail("MCP_NAME_COLLISION", `Header ${safe(normalized)} has colliding values.`))
     seenValues.add(normalized)
     checks.push(
       headerName(name) && !forbiddenHeader(normalized) && allowed.has(normalized)
@@ -217,7 +336,9 @@ function diagnoseServer(server: ConfigMCPEnterprisePolicyV1.RemoteServer) {
         : fail("MCP_HEADER_NOT_ALLOWED", `Header ${safe(normalized)} is not allowed.`),
     )
     checks.push(
-      secret.source === "environment" && /^[A-Z_][A-Z0-9_]*$/.test(secret.name) && ["Bearer", "Raw"].includes(secret.format)
+      secret.source === "environment" &&
+        /^[A-Z_][A-Z0-9_]*$/.test(secret.name) &&
+        ["Bearer", "Raw"].includes(secret.format)
         ? pass("MCP_SECRET_REFERENCE_VALID", `Header ${safe(normalized)} uses a valid environment reference.`)
         : fail("MCP_SECRET_REFERENCE_INVALID", `Header ${safe(normalized)} has an invalid secret reference.`),
     )
@@ -248,14 +369,16 @@ function diagnoseUrl(value: string) {
   const checks: DiagnosticCheck[] = [pass("MCP_URL_PRESENT", "An exact server URL is declared.")]
   if (value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value))
     return checks.concat(fail("MCP_URL_INVALID", "URL contains whitespace or control characters."))
-  if (/\{[^}]+\}|\$\{[^}]+\}/.test(value)) return checks.concat(fail("MCP_URL_INVALID", "URL contains an unresolved placeholder."))
+  if (/\{[^}]+\}|\$\{[^}]+\}/.test(value))
+    return checks.concat(fail("MCP_URL_INVALID", "URL contains an unresolved placeholder."))
   if (value.startsWith("//")) return checks.concat(fail("MCP_URL_INVALID", "Protocol-relative URLs are prohibited."))
   try {
     const url = new URL(value)
     if (!url.hostname) checks.push(fail("MCP_URL_INVALID", "URL hostname is missing."))
     if (url.protocol !== "http:" && url.protocol !== "https:")
       checks.push(fail("MCP_URL_SCHEME_REJECTED", "Only HTTP and HTTPS URLs are supported."))
-    if (url.username || url.password) checks.push(fail("MCP_URL_CREDENTIALS_REJECTED", "URL credentials are prohibited."))
+    if (url.username || url.password)
+      checks.push(fail("MCP_URL_CREDENTIALS_REJECTED", "URL credentials are prohibited."))
     if (url.search) checks.push(fail("MCP_URL_QUERY_REJECTED", "URL query values are prohibited."))
     if (url.hash) checks.push(fail("MCP_URL_FRAGMENT_REJECTED", "URL fragments are prohibited."))
   } catch {
@@ -292,23 +415,45 @@ function sanitizeServer(server: ConfigMCPEnterprisePolicyV1.RemoteServer) {
     oauth: { allowed: false as const },
     headerNames: server.headers.allowedNames.map((name) => name.toLowerCase()).sort(),
     secretReferences: Object.entries(server.headers.values)
-      .map(([header, value]) => ({ header: header.toLowerCase(), source: value.source, name: value.name, format: value.format }))
+      .map(([header, value]) => ({
+        header: header.toLowerCase(),
+        source: value.source,
+        name: value.name,
+        format: value.format,
+      }))
       .sort((a, b) => a.header.localeCompare(b.header)),
     capabilities: server.capabilities,
     runtime: server.runtime,
   }
 }
 
-function referenceResult(alias: string, server: string | undefined, source: MCPConfigSource | undefined, checks: DiagnosticCheck[], constraints?: ReturnType<typeof sanitizeServer>) {
-  return { alias: safe(alias), server: server ? safe(server) : undefined, source, status: checks.some((check) => check.status === "fail") ? ("fail" as const) : ("pass" as const), checks, constraints }
+function referenceResult(
+  alias: string,
+  server: string | undefined,
+  source: MCPConfigSource | undefined,
+  checks: DiagnosticCheck[],
+  constraints?: ReturnType<typeof sanitizeServer>,
+) {
+  return {
+    alias: safe(alias),
+    server: server ? safe(server) : undefined,
+    source,
+    status: checks.some((check) => check.status === "fail") ? ("fail" as const) : ("pass" as const),
+    checks,
+    constraints,
+  }
 }
 
 function referenceSourceCheck(source?: MCPConfigSource): DiagnosticCheck {
   if (!source) return warning("MCP_REFERENCE_SOURCE_GLOBAL", "Reference provenance is unavailable.")
   const codes: Partial<Record<MCPConfigSource["kind"], DiagnosticCode>> = {
-    project: "MCP_REFERENCE_SOURCE_PROJECT", global: "MCP_REFERENCE_SOURCE_GLOBAL", inline: "MCP_REFERENCE_SOURCE_INLINE",
-    "custom-config": "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG", "custom-config-directory": "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG",
-    "managed-file": "MCP_REFERENCE_SOURCE_MANAGED", "managed-preference": "MCP_REFERENCE_SOURCE_MANAGED",
+    project: "MCP_REFERENCE_SOURCE_PROJECT",
+    global: "MCP_REFERENCE_SOURCE_GLOBAL",
+    inline: "MCP_REFERENCE_SOURCE_INLINE",
+    "custom-config": "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG",
+    "custom-config-directory": "MCP_REFERENCE_SOURCE_CUSTOM_CONFIG",
+    "managed-file": "MCP_REFERENCE_SOURCE_MANAGED",
+    "managed-preference": "MCP_REFERENCE_SOURCE_MANAGED",
   }
   return info(codes[source.kind] ?? "MCP_REFERENCE_SOURCE_GLOBAL", `Reference source is ${source.kind}.`)
 }
@@ -318,7 +463,8 @@ function corrections(checks: DiagnosticCheck[]) {
     MCP_POLICY_NOT_MANAGED: "Move enterprise.mcp policy into administrator-managed configuration.",
     MCP_REFERENCE_UNKNOWN: "Reference an ID declared by the managed enterprise MCP policy.",
     MCP_DEFINITION_UNMANAGED: "Replace local or remote MCP configuration with a narrow managed reference.",
-    MCP_PROJECT_REFERENCES_PROHIBITED: "Ask an administrator to allow project references or declare the reference in managed configuration.",
+    MCP_PROJECT_REFERENCES_PROHIBITED:
+      "Ask an administrator to allow project references or declare the reference in managed configuration.",
     MCP_TRANSPORT_UNSUPPORTED: "Pin the managed server to streamable-http for the planned remote phase.",
     MCP_NAME_COLLISION: "Choose unique aliases and one alias per managed server.",
   }
@@ -329,12 +475,24 @@ function isManagedReference(value: Reference): value is ConfigMCPV1.Managed {
   return typeof value === "object" && value !== null && "type" in value && value.type === "managed"
 }
 
-function normalizeName(value: string) { return value.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase() }
-function safe(value: string) { return value.replace(/[\r\n\t]/g, " ").slice(0, 256) }
-function headerName(value: string) { return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value) }
+function normalizeName(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase()
+}
+function safe(value: string) {
+  return value.replace(/[\r\n\t]/g, " ").slice(0, 256)
+}
+function headerName(value: string) {
+  return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value)
+}
 function forbiddenHeader(value: string) {
   return new Set([
-    "host", "content-length", "transfer-encoding", "connection", "proxy-authorization", "cookie", "set-cookie",
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
   ]).has(value)
 }
 function validCidr(value: string) {
@@ -343,12 +501,25 @@ function validCidr(value: string) {
   const prefix = Number(parts[1])
   if (parts[0].includes(":")) return /^[0-9a-f:]+$/i.test(parts[0]) && prefix >= 0 && prefix <= 128
   const octets = parts[0].split(".")
-  return octets.length === 4 && octets.every((item) => /^\d+$/.test(item) && Number(item) <= 255) && prefix >= 0 && prefix <= 32
+  return (
+    octets.length === 4 &&
+    octets.every((item) => /^\d+$/.test(item) && Number(item) <= 255) &&
+    prefix >= 0 &&
+    prefix <= 32
+  )
 }
-function pass(code: DiagnosticCode, message: string): DiagnosticCheck { return { code, status: "pass", message } }
-function fail(code: DiagnosticCode, message: string): DiagnosticCheck { return { code, status: "fail", message } }
-function info(code: DiagnosticCode, message: string): DiagnosticCheck { return { code, status: "info", message } }
-function warning(code: DiagnosticCode, message: string): DiagnosticCheck { return { code, status: "warning", message } }
+function pass(code: DiagnosticCode, message: string): DiagnosticCheck {
+  return { code, status: "pass", message }
+}
+function fail(code: DiagnosticCode, message: string): DiagnosticCheck {
+  return { code, status: "fail", message }
+}
+function info(code: DiagnosticCode, message: string): DiagnosticCheck {
+  return { code, status: "info", message }
+}
+function warning(code: DiagnosticCode, message: string): DiagnosticCheck {
+  return { code, status: "warning", message }
+}
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") Object.values(value).forEach(deepFreeze)
   return value && typeof value === "object" ? Object.freeze(value) : value

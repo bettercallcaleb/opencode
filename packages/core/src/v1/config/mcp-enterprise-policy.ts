@@ -2,8 +2,7 @@ export * as ConfigMCPEnterprisePolicyV1 from "./mcp-enterprise-policy"
 
 import { Schema } from "effect"
 
-const bounded = (minimum: number, maximum: number) =>
-  Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+const bounded = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
 
 export const SecretReference = Schema.Struct({
   source: Schema.Literal("environment"),
@@ -50,6 +49,11 @@ export type RemoteServer = Schema.Schema.Type<typeof RemoteServer>
 export const Limits = Schema.Struct({
   connectTimeoutMs: bounded(100, 120_000),
   requestTimeoutMs: bounded(100, 120_000),
+  responseHeaderTimeoutMs: bounded(100, 120_000),
+  streamInactivityTimeoutMs: bounded(100, 120_000),
+  maxRequestBytes: bounded(1_024, 16 * 1_024 * 1_024),
+  maxHeaderBytes: bounded(1_024, 128 * 1_024),
+  maxStreamFrameBytes: bounded(1_024, 8 * 1_024 * 1_024),
   maxResponseBytes: bounded(1_024, 16 * 1_024 * 1_024),
   maxTextBytes: bounded(1_024, 8 * 1_024 * 1_024),
   maxSchemaBytes: bounded(1_024, 2 * 1_024 * 1_024),
