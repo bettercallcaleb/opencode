@@ -11,12 +11,36 @@ export const DiagnosticCodes = [
   "MCP_POLICY_NOT_MANAGED",
   "MCP_POLICY_MODE_DIAGNOSE",
   "MCP_POLICY_MODE_CONNECT",
+  "MCP_POLICY_MODE_CATALOG",
   "MCP_POLICY_MODE_UNSUPPORTED",
   "MCP_OPERATIONALLY_DISABLED",
   "MCP_CONNECTION_ELIGIBLE",
   "MCP_CONNECTION_OPERATIONAL",
   "MCP_CONNECTION_DISABLED",
   "MCP_CONNECTION_FAILED",
+  "MCP_TOOL_CATALOG_ELIGIBLE",
+  "MCP_TOOL_CATALOG_DISCOVERY_STARTED",
+  "MCP_TOOL_CATALOG_DISCOVERY_PASS",
+  "MCP_TOOL_CATALOG_DISCOVERY_FAILED",
+  "MCP_TOOL_ADMITTED",
+  "MCP_TOOL_REJECTED_NOT_ALLOWED",
+  "MCP_TOOL_REQUIRED_MISSING",
+  "MCP_TOOL_DUPLICATE",
+  "MCP_TOOL_SCHEMA_INVALID",
+  "MCP_TOOL_SCHEMA_TOO_LARGE",
+  "MCP_TOOL_SCHEMA_TOO_DEEP",
+  "MCP_TOOL_SCHEMA_TOO_MANY_ENTRIES",
+  "MCP_TOOL_SCHEMA_ARRAY_TOO_LARGE",
+  "MCP_TOOL_NAME_INVALID",
+  "MCP_TOOL_DESCRIPTION_TOO_LARGE",
+  "MCP_TOOL_DEFINITION_TOO_LARGE",
+  "MCP_TOOL_CATALOG_TOO_LARGE",
+  "MCP_TOOL_LIST_TOO_LARGE",
+  "MCP_TOOL_LIST_TOTAL_TOO_LARGE",
+  "MCP_TOOL_LIST_PAGE_LIMIT",
+  "MCP_TOOL_LIST_CURSOR_INVALID",
+  "MCP_TOOL_LIST_CURSOR_LOOP",
+  "MCP_TOOL_CATALOG_OPERATIONALLY_PRIVATE",
   "MCP_REFERENCE_DECLARED",
   "MCP_REFERENCE_UNKNOWN",
   "MCP_REFERENCE_DISABLED",
@@ -116,6 +140,7 @@ export type AdmittedEnterpriseMcpServer = Readonly<{
       format: "Bearer" | "Raw"
     }>[]
   }>
+  tools: readonly string[]
   limits: Readonly<ConfigMCPEnterprisePolicyV1.Info["limits"]>
 }>
 
@@ -154,6 +179,7 @@ export function admitEnterpriseMcpHttpServer(input: AdmissionInput, alias: strin
         }))
         .sort((a, b) => a.header.localeCompare(b.header)),
     },
+    tools: [...server.capabilities.tools.names],
     limits: { ...input.policy.limits },
   }
   Object.defineProperty(admitted, admittedEnterpriseMcpServer, { value: true, enumerable: false })
@@ -171,8 +197,10 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
       ? pass("MCP_ENTERPRISE_MODE_ENABLED", "Enterprise mode is enabled.")
       : info("MCP_ENTERPRISE_MODE_DISABLED", "Enterprise mode is disabled; policy is diagnostic only."),
     info(
-      input.policy?.mode === "connect" ? "MCP_CONNECTION_OPERATIONAL" : "MCP_OPERATIONALLY_DISABLED",
-      input.policy?.mode === "connect"
+      input.policy?.mode === "connect" || input.policy?.mode === "catalog"
+        ? "MCP_CONNECTION_OPERATIONAL"
+        : "MCP_OPERATIONALLY_DISABLED",
+      input.policy?.mode === "connect" || input.policy?.mode === "catalog"
         ? "Managed remote connection initialization is operational."
         : "Managed remote connection initialization is disabled.",
     ),
@@ -197,7 +225,11 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     )
     checks.push(
       pass(
-        input.policy.mode === "connect" ? "MCP_POLICY_MODE_CONNECT" : "MCP_POLICY_MODE_DIAGNOSE",
+        input.policy.mode === "catalog"
+          ? "MCP_POLICY_MODE_CATALOG"
+          : input.policy.mode === "connect"
+            ? "MCP_POLICY_MODE_CONNECT"
+            : "MCP_POLICY_MODE_DIAGNOSE",
         `Policy mode is ${input.policy.mode}.`,
       ),
     )
@@ -226,7 +258,7 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
         normalizedServers.set(normalized, name)
         checks.push(pass("MCP_NAME_VALID", `Managed server ${safe(name)} has a unique namespace.`))
       }
-      checks.push(...diagnoseServer(server))
+      checks.push(...diagnoseServer(server, input.policy.limits))
     }
   }
 
@@ -288,14 +320,16 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     referenceChecks.push(pass("MCP_SERVER_KIND_REMOTE", "Server kind is remote."))
     if (server.enabled === false)
       referenceChecks.push(fail("MCP_SERVER_DISABLED", "Managed server policy is disabled."))
-    referenceChecks.push(...diagnoseServer(server))
+    referenceChecks.push(...diagnoseServer(server, input.policy.limits))
     if (!referenceChecks.some((check) => check.status === "fail"))
       referenceChecks.push(pass("MCP_REFERENCE_ALLOWED", "Reference passes Phase 1 admission diagnostics."))
     if (!referenceChecks.some((check) => check.status === "fail"))
       referenceChecks.push(
-        input.policy.mode === "connect"
-          ? pass("MCP_CONNECTION_ELIGIBLE", "Managed reference is eligible for connection initialization.")
-          : info("MCP_CONNECTION_DISABLED", "Policy diagnose mode does not permit connection initialization."),
+        input.policy.mode === "catalog"
+          ? pass("MCP_TOOL_CATALOG_ELIGIBLE", "Managed reference is eligible for private catalog discovery.")
+          : input.policy.mode === "connect"
+            ? pass("MCP_CONNECTION_ELIGIBLE", "Managed reference is eligible for connection initialization.")
+            : info("MCP_CONNECTION_DISABLED", "Policy diagnose mode does not permit connection initialization."),
       )
     return referenceResult(alias, value.server, source, referenceChecks, sanitizeServer(server))
   })
@@ -311,12 +345,16 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
       status: errors ? ("fail" as const) : ("pass" as const),
       errors,
       warnings,
-      operationallyEnabled: input.enterpriseMode && input.policy?.mode === "connect" && !errors,
+      operationallyEnabled:
+        input.enterpriseMode && (input.policy?.mode === "connect" || input.policy?.mode === "catalog") && !errors,
     },
   })
 }
 
-function diagnoseServer(server: ConfigMCPEnterprisePolicyV1.RemoteServer) {
+function diagnoseServer(
+  server: ConfigMCPEnterprisePolicyV1.RemoteServer,
+  limits: ConfigMCPEnterprisePolicyV1.Info["limits"],
+) {
   const checks: DiagnosticCheck[] = []
   checks.push(...diagnoseUrl(server.url))
   checks.push(
@@ -379,9 +417,11 @@ function diagnoseServer(server: ConfigMCPEnterprisePolicyV1.RemoteServer) {
   checks.push(pass("MCP_DYNAMIC_TOOL_POLICY_PRESENT", "Dynamic tool changes require re-admission."))
   const tools = new Map<string, string>()
   for (const name of server.capabilities.tools.names) {
+    if (!name || /[\u0000-\u001f\u007f]/.test(name) || Buffer.byteLength(name) > limits.maxToolNameBytes)
+      checks.push(fail("MCP_TOOL_NAME_INVALID", "Managed tool allowlist contains an invalid name."))
     const normalized = normalizeName(name)
     const existing = tools.get(normalized)
-    if (existing && existing !== name)
+    if (existing)
       checks.push(fail("MCP_NAME_COLLISION", `Tool ${safe(name)} collides with ${safe(existing)} after normalization.`))
     else tools.set(normalized, name)
   }
@@ -503,7 +543,10 @@ function isManagedReference(value: Reference): value is ConfigMCPV1.Managed {
 }
 
 function normalizeName(value: string) {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase()
+  return value
+    .normalize("NFC")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .toLowerCase()
 }
 function safe(value: string) {
   return value.replace(/[\r\n\t]/g, " ").slice(0, 256)

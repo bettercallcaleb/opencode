@@ -57,6 +57,16 @@ export const Limits = Schema.Struct({
   maxResponseBytes: bounded(1_024, 16 * 1_024 * 1_024),
   maxTextBytes: bounded(1_024, 8 * 1_024 * 1_024),
   maxSchemaBytes: bounded(1_024, 2 * 1_024 * 1_024),
+  maxToolListPages: bounded(1, 100),
+  maxToolListTotalBytes: bounded(1_024, 64 * 1_024 * 1_024),
+  maxCursorBytes: bounded(1, 16 * 1_024),
+  maxToolNameBytes: bounded(1, 1_024),
+  maxToolDescriptionBytes: bounded(1, 64 * 1_024),
+  maxToolDefinitionBytes: bounded(1_024, 4 * 1_024 * 1_024),
+  maxToolCatalogBytes: bounded(1_024, 32 * 1_024 * 1_024),
+  maxToolSchemaDepth: bounded(1, 128),
+  maxToolSchemaEntries: bounded(1, 100_000),
+  maxToolSchemaArrayItems: bounded(1, 100_000),
   maxListItems: bounded(1, 10_000),
   maxAttachments: bounded(0, 100),
   maxAttachmentBytes: bounded(1_024, 50 * 1_024 * 1_024),
@@ -64,7 +74,7 @@ export const Limits = Schema.Struct({
 })
 
 export const Info = Schema.Struct({
-  mode: Schema.Literals(["diagnose", "connect"]),
+  mode: Schema.Literals(["diagnose", "connect", "catalog"]),
   projectReferences: Schema.Boolean,
   audit: Schema.Struct({
     mode: Schema.Literals(["off", "decisions"]),

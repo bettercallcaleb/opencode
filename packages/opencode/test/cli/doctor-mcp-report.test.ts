@@ -64,6 +64,7 @@ describe("MCP doctor report", () => {
       schemaVersion: 1,
       connectionMode: "connect",
       managedRemoteConnectionPermitted: true,
+      managedToolCatalogDiscoveryPermitted: false,
       exposedCapabilities: {
         tools: false,
         prompts: false,
@@ -75,6 +76,30 @@ describe("MCP doctor report", () => {
     const output = formatDoctorMcpReport(report)
     expect(output).toContain("Managed remote connection is permitted.")
     expect(output).toContain("MCP tools, prompts, resources and instructions remain disabled.")
+  })
+
+  test("reports private catalog permission without execution or exposure", () => {
+    const report = buildDoctorMcpReport({
+      enterpriseMode: true,
+      diagnostic: {
+        managedPolicy: { ...enterpriseMcpPolicy, mode: "catalog" },
+        policySource: { kind: "managed-file", source: "/etc/opencode/opencode.json" },
+        policyFieldSources: {},
+        unmanagedPolicySources: [],
+        references: { source: { type: "managed", server: "source-control" } },
+        referenceSources: { source: { kind: "project", source: "/workspace/opencode.json" } },
+      },
+    })
+    expect(report.runtime).toMatchObject({
+      connectionMode: "catalog",
+      managedRemoteConnectionPermitted: true,
+      managedToolCatalogDiscoveryPermitted: true,
+      exposedCapabilities: { tools: false },
+    })
+    const output = formatDoctorMcpReport(report)
+    expect(output).toContain("Managed tool catalog discovery is permitted.")
+    expect(output).toContain("Admitted tools remain private.")
+    expect(output).toContain("MCP tool execution and model exposure remain disabled.")
   })
 
   test("redacts secrets recursively and verbose never weakens it", () => {

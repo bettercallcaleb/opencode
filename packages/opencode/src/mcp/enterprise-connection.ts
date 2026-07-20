@@ -1,10 +1,43 @@
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import type { AnySchema } from "@modelcontextprotocol/sdk/server/zod-compat.js"
 import { createEnterpriseMcpFetch, EnterpriseMcpHttpError } from "./enterprise-http"
 import type { AdmittedEnterpriseMcpServer } from "./enterprise-policy"
+import { z } from "zod/v4"
 
 export type EnterpriseMcpConnection = Readonly<{ close: () => Promise<void> }>
+const EnterpriseToolPage = z.object({ tools: z.array(z.unknown()), nextCursor: z.string().optional() })
+type EnterpriseToolPage = { tools: unknown[]; nextCursor?: string }
+const enterpriseClients = new WeakMap<
+  EnterpriseMcpConnection,
+  { client: Client; admitted: AdmittedEnterpriseMcpServer }
+>()
+
+export async function listEnterpriseMcpTools(
+  connection: EnterpriseMcpConnection,
+  admitted: AdmittedEnterpriseMcpServer,
+  cursor: string | undefined,
+  timeout: number,
+  signal?: AbortSignal,
+): Promise<EnterpriseToolPage> {
+  const owner = enterpriseClients.get(connection)
+  if (!owner || owner.admitted !== admitted)
+    throw new Error("[MCP_TOOL_CATALOG_DISCOVERY_FAILED] Enterprise connection is unavailable.")
+  if (!owner.client.getServerCapabilities()?.tools)
+    throw new Error("[MCP_TOOL_CATALOG_DISCOVERY_FAILED] Server did not advertise tool discovery.")
+  const result: unknown = await owner.client.request(
+    { method: "tools/list", params: cursor === undefined ? undefined : { cursor } },
+    EnterpriseToolPage as unknown as AnySchema,
+    { signal, timeout },
+  )
+  if (!result || typeof result !== "object" || !("tools" in result) || !Array.isArray(result.tools))
+    throw new Error("Invalid managed tool catalog page.")
+  return {
+    tools: result.tools,
+    nextCursor: "nextCursor" in result && typeof result.nextCursor === "string" ? result.nextCursor : undefined,
+  }
+}
 
 export async function closeEnterpriseMcpConnections(connections: readonly EnterpriseMcpConnection[]) {
   await Promise.allSettled(connections.map((connection) => connection.close()))
@@ -33,9 +66,12 @@ export async function connectEnterpriseMcp(
   })
   const client = new Client({ name: "opencode-enterprise", version: InstallationVersion }, { capabilities: {} })
   let closing = false
+  let connection: EnterpriseMcpConnection | undefined
   const close = () => {
     closing = true
+    signal?.removeEventListener("abort", abort)
     controller.abort()
+    if (connection) enterpriseClients.delete(connection)
     return Promise.allSettled([client.close(), transport.close()]).then(() => undefined)
   }
   let rejectAbort!: (error: DOMException) => void
@@ -58,12 +94,15 @@ export async function connectEnterpriseMcp(
     throw new Error(formatEnterpriseMcpConnectionError(error))
   } finally {
     clearTimeout(timer)
-    signal?.removeEventListener("abort", abort)
   }
   client.onclose = () => {
+    signal?.removeEventListener("abort", abort)
+    if (connection) enterpriseClients.delete(connection)
     if (!closing) onclose?.()
   }
-  return Object.freeze({ close })
+  connection = Object.freeze({ close })
+  enterpriseClients.set(connection, { client, admitted })
+  return connection
 }
 
 export function formatEnterpriseMcpConnectionError(error: unknown) {

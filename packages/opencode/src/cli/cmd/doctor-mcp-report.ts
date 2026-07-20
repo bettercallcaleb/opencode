@@ -50,7 +50,11 @@ export function buildDoctorMcpReport(input: {
       connectionMode: input.diagnostic.managedPolicy?.mode ?? "unconfigured",
       managedRemoteConnectionPermitted:
         input.enterpriseMode &&
-        input.diagnostic.managedPolicy?.mode === "connect" &&
+        (input.diagnostic.managedPolicy?.mode === "connect" || input.diagnostic.managedPolicy?.mode === "catalog") &&
+        admission.summary.status === "pass",
+      managedToolCatalogDiscoveryPermitted:
+        input.enterpriseMode &&
+        input.diagnostic.managedPolicy?.mode === "catalog" &&
         admission.summary.status === "pass",
       exposedCapabilities: {
         tools: false,
@@ -104,6 +108,12 @@ export function formatDoctorMcpReport(report: ReturnType<typeof buildDoctorMcpRe
   }
   if (report.runtime.managedRemoteConnectionPermitted) {
     lines.push("", "Managed remote connection is permitted.")
+    if (report.runtime.managedToolCatalogDiscoveryPermitted) {
+      lines.push("Managed tool catalog discovery is permitted.")
+      lines.push("Admitted tools remain private.")
+      lines.push("MCP tool execution and model exposure remain disabled.", "")
+      return lines.join("\n")
+    }
     lines.push("MCP tools, prompts, resources and instructions remain disabled.", "")
     return lines.join("\n")
   }

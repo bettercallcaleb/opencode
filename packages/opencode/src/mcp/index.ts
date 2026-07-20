@@ -41,6 +41,12 @@ import {
   connectEnterpriseMcp,
   type EnterpriseMcpConnection,
 } from "./enterprise-connection"
+import {
+  discoverEnterpriseMcpCatalog,
+  EnterpriseMcpCatalogError,
+  isEnterpriseMcpCatalog,
+  type EnterpriseMcpCatalog,
+} from "./enterprise-catalog"
 
 export const ENTERPRISE_DISABLED_MESSAGE = "MCP is disabled in enterprise mode"
 
@@ -165,6 +171,7 @@ interface State {
   instructions: Record<string, string>
   enterpriseConnections: Record<string, EnterpriseMcpConnection>
   enterpriseAttempts: Record<string, AbortController>
+  enterpriseCatalogs: Record<string, EnterpriseMcpCatalog>
 }
 
 export interface ServerInstructions {
@@ -528,11 +535,13 @@ const layer = Layer.effect(
           instructions: {},
           enterpriseConnections: {},
           enterpriseAttempts: {},
+          enterpriseCatalogs: {},
         }
         if (Flag.OPENCODE_ENTERPRISE_MODE) {
           yield* Effect.addFinalizer(() => {
             Object.values(s.enterpriseAttempts).forEach((controller) => controller.abort())
             s.enterpriseAttempts = {}
+            s.enterpriseCatalogs = {}
             const connections = Object.values(s.enterpriseConnections)
             s.enterpriseConnections = {}
             return Effect.promise(() => closeEnterpriseMcpConnections(connections))
@@ -561,7 +570,7 @@ const layer = Layer.effect(
                   s.status[key] = { status: "disabled" }
                   return
                 }
-                if (diagnostic.managedPolicy?.mode !== "connect") {
+                if (diagnostic.managedPolicy?.mode !== "connect" && diagnostic.managedPolicy?.mode !== "catalog") {
                   s.status[key] = { status: "disabled" }
                   return
                 }
@@ -594,21 +603,23 @@ const layer = Layer.effect(
                 let connection: EnterpriseMcpConnection | undefined
                 const controller = new AbortController()
                 s.enterpriseAttempts[key] = controller
+                const admitted = admitEnterpriseMcpHttpServer(input, key)
                 const result = yield* Effect.exit(
                   Effect.tryPromise(() =>
                     connectEnterpriseMcp(
-                      admitEnterpriseMcpHttpServer(input, key),
+                      admitted,
                       () => {
                         if (s.enterpriseConnections[key] !== connection) return
                         delete s.enterpriseConnections[key]
+                        delete s.enterpriseCatalogs[key]
                         s.status[key] = { status: "failed", error: "[MCP_CONNECTION_FAILED] Connection closed." }
                       },
                       controller.signal,
                     ),
                   ),
                 )
-                delete s.enterpriseAttempts[key]
                 if (Exit.isFailure(result)) {
+                  delete s.enterpriseAttempts[key]
                   const error = Cause.squash(result.cause)
                   s.status[key] = {
                     status: "failed",
@@ -616,7 +627,43 @@ const layer = Layer.effect(
                   }
                   return
                 }
-                connection = result.value
+                const initialized = result.value
+                connection = initialized
+                if (diagnostic.managedPolicy.mode === "catalog") {
+                  const catalog = yield* Effect.exit(
+                    Effect.tryPromise(() => discoverEnterpriseMcpCatalog(initialized, admitted, controller.signal)),
+                  )
+                  if (Exit.isFailure(catalog)) {
+                    delete s.enterpriseAttempts[key]
+                    yield* Effect.promise(() => initialized.close())
+                    const error = Cause.squash(catalog.cause)
+                    s.status[key] = {
+                      status: "failed",
+                      error:
+                        error instanceof EnterpriseMcpCatalogError
+                          ? error.message
+                          : "[MCP_TOOL_CATALOG_DISCOVERY_FAILED] Managed tool catalog discovery failed.",
+                    }
+                    return
+                  }
+                  const existing = new Set(
+                    Object.values(s.enterpriseCatalogs).flatMap((item) => item.tools.map((tool) => tool.futureToolID)),
+                  )
+                  if (
+                    !isEnterpriseMcpCatalog(catalog.value) ||
+                    catalog.value.tools.some((tool) => existing.has(tool.futureToolID))
+                  ) {
+                    delete s.enterpriseAttempts[key]
+                    yield* Effect.promise(() => initialized.close())
+                    s.status[key] = {
+                      status: "failed",
+                      error: "[MCP_NAME_COLLISION] Managed tool names collide after normalization.",
+                    }
+                    return
+                  }
+                  s.enterpriseCatalogs[key] = catalog.value
+                }
+                delete s.enterpriseAttempts[key]
                 s.enterpriseConnections[key] = connection
                 s.status[key] = { status: "connected" }
               }),

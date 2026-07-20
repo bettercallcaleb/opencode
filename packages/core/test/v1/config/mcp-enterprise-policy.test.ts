@@ -39,6 +39,16 @@ const policy = {
     maxStreamFrameBytes: 262_144,
     maxTextBytes: 1_048_576,
     maxSchemaBytes: 262_144,
+    maxToolListPages: 8,
+    maxToolListTotalBytes: 8_388_608,
+    maxCursorBytes: 1_024,
+    maxToolNameBytes: 256,
+    maxToolDescriptionBytes: 16_384,
+    maxToolDefinitionBytes: 524_288,
+    maxToolCatalogBytes: 2_097_152,
+    maxToolSchemaDepth: 32,
+    maxToolSchemaEntries: 10_000,
+    maxToolSchemaArrayItems: 10_000,
     maxListItems: 500,
     maxAttachments: 4,
     maxAttachmentBytes: 10_485_760,
@@ -68,6 +78,12 @@ describe("enterprise MCP configuration schemas", () => {
   test("accepts explicit connect mode", () => {
     expect(Schema.decodeUnknownSync(ConfigMCPEnterprisePolicyV1.Info)({ ...policy, mode: "connect" }).mode).toBe(
       "connect",
+    )
+  })
+
+  test("accepts explicit catalog mode", () => {
+    expect(Schema.decodeUnknownSync(ConfigMCPEnterprisePolicyV1.Info)({ ...policy, mode: "catalog" }).mode).toBe(
+      "catalog",
     )
   })
 

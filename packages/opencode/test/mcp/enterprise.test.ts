@@ -14,6 +14,7 @@ const connectRequests: unknown[] = []
 const connectHttpMethods: string[] = []
 const connectPaths: string[] = []
 let diagnoseRequests = 0
+const catalogMethods: string[] = []
 
 const enterpriseMode = Effect.acquireRelease(
   Effect.sync(() => {
@@ -157,6 +158,70 @@ it.instance(
 )
 
 it.instance(
+  "discovers a private catalog without exposing or executing tools",
+  () =>
+    Effect.gen(function* () {
+      yield* enterpriseMode
+      const mcp = yield* MCP.Service
+      expect(yield* mcp.status()).toEqual({ managed: { status: "connected" } })
+      expect(yield* mcp.clients()).toEqual({})
+      expect(yield* mcp.tools()).toEqual({})
+      expect(yield* mcp.prompts()).toEqual({})
+      expect(yield* mcp.resources()).toEqual({})
+      expect(yield* mcp.resourceTemplates()).toEqual({})
+      expect(yield* mcp.instructions()).toEqual([])
+      expect(catalogMethods).toEqual(["initialize", "notifications/initialized", "tools/list"])
+      expect(catalogMethods).not.toContain("tools/call")
+    }),
+  {
+    config: { mcp: { managed: { type: "managed", server: "connection" } } },
+    init: managedRuntime("catalog", async (request, response) => {
+      if (request.method === "GET") {
+        response.writeHead(405).end()
+        return
+      }
+      const chunks: Uint8Array[] = []
+      for await (const chunk of request) chunks.push(chunk)
+      const message = JSON.parse(Buffer.concat(chunks).toString())
+      catalogMethods.push(message.method)
+      response.writeHead(message.method === "notifications/initialized" ? 202 : 200, {
+        "content-type": "application/json",
+      })
+      if (message.method === "initialize") {
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-11-25",
+              capabilities: { tools: { listChanged: true } },
+              serverInfo: { name: "private-catalog", version: "1" },
+            },
+          }),
+        )
+        return
+      }
+      if (message.method === "tools/list") {
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [
+                { name: "search_repositories", inputSchema: { type: "object", properties: {} } },
+                { name: "not_allowed", inputSchema: { type: "object", properties: {} } },
+              ],
+            },
+          }),
+        )
+        return
+      }
+      response.end()
+    }),
+  },
+)
+
+it.instance(
   "keeps diagnose mode offline for an otherwise valid managed reference",
   () =>
     Effect.gen(function* () {
@@ -200,7 +265,7 @@ it.instance(
 )
 
 function managedRuntime(
-  mode: "diagnose" | "connect",
+  mode: "diagnose" | "connect" | "catalog",
   handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
 ) {
   return (directory: string) =>
@@ -209,6 +274,7 @@ function managedRuntime(
       if (mode === "connect") connectHttpMethods.splice(0)
       if (mode === "connect") connectPaths.splice(0)
       if (mode === "diagnose") diagnoseRequests = 0
+      if (mode === "catalog") catalogMethods.splice(0)
       const server = yield* loopbackServer(handler)
       const address = server.address()
       if (!address || typeof address === "string") return yield* Effect.die(new Error("missing test address"))
@@ -230,7 +296,7 @@ function loopbackServer(handler: (request: IncomingMessage, response: ServerResp
   )
 }
 
-function managedPolicyEnvironment(directory: string, url: string, mode: "diagnose" | "connect") {
+function managedPolicyEnvironment(directory: string, url: string, mode: "diagnose" | "connect" | "catalog") {
   return Effect.acquireRelease(
     Effect.promise(async () => {
       const managed = path.join(directory, "managed")
