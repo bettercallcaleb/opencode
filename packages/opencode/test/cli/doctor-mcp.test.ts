@@ -56,16 +56,18 @@ async function run(args: string[], input: { config?: object; preload?: boolean; 
 
 describe.serial("opencode doctor mcp", () => {
   test("runs valid human, JSON, and output paths with zero network or subprocess activity", async () => {
-    await setManaged({ enterprise: { mcp: enterpriseMcpPolicy } })
+    await setManaged({ enterprise: { mcp: { ...enterpriseMcpPolicy, mode: "connect" } } })
     const config = { mcp: { source: { type: "managed", server: "source-control" } } }
     const human = await run(["doctor", "mcp"], { config, preload: true })
     expect(human.exitCode).toBe(0)
     expect(human.stdout).toContain("Overall policy result: PASS")
-    expect(human.stdout).toContain("MCP is operationally disabled in Phase 1.")
+    expect(human.stdout).toContain("Managed remote connection is permitted.")
+    expect(human.stdout).toContain("MCP tools, prompts, resources and instructions remain disabled.")
     const output = path.join(root, "mcp-doctor.json")
     const json = await run(["doctor", "mcp", "source", "--json", "--output", output], { config, preload: true })
     expect(json.exitCode).toBe(0)
-    expect(JSON.parse(json.stdout).summary.operationallyEnabled).toBe(false)
+    expect(JSON.parse(json.stdout).summary.operationallyEnabled).toBe(true)
+    expect(JSON.parse(json.stdout).runtime.managedRemoteConnectionPermitted).toBe(true)
     expect(JSON.parse(await Bun.file(output).text()).summary.status).toBe("pass")
   }, 60_000)
 

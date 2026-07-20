@@ -35,6 +35,12 @@ import { McpCatalog } from "./catalog"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { admitEnterpriseMcpHttpServer, diagnoseEnterpriseMcp } from "./enterprise-policy"
+import {
+  closeEnterpriseMcpConnections,
+  connectEnterpriseMcp,
+  type EnterpriseMcpConnection,
+} from "./enterprise-connection"
 
 export const ENTERPRISE_DISABLED_MESSAGE = "MCP is disabled in enterprise mode"
 
@@ -124,6 +130,10 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCPV1.Info {
   return typeof entry === "object" && entry !== null && "type" in entry
 }
 
+function normalizeEnterpriseAlias(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase()
+}
+
 function timeoutOf(entry: ConfigMCPV1.Info | undefined) {
   return entry && entry.type !== "managed" ? entry.timeout : undefined
 }
@@ -153,6 +163,8 @@ interface State {
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
+  enterpriseConnections: Record<string, EnterpriseMcpConnection>
+  enterpriseAttempts: Record<string, AbortController>
 }
 
 export interface ServerInstructions {
@@ -514,8 +526,104 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
+          enterpriseConnections: {},
+          enterpriseAttempts: {},
         }
-        if (Flag.OPENCODE_ENTERPRISE_MODE) return s
+        if (Flag.OPENCODE_ENTERPRISE_MODE) {
+          yield* Effect.addFinalizer(() => {
+            Object.values(s.enterpriseAttempts).forEach((controller) => controller.abort())
+            s.enterpriseAttempts = {}
+            const connections = Object.values(s.enterpriseConnections)
+            s.enterpriseConnections = {}
+            return Effect.promise(() => closeEnterpriseMcpConnections(connections))
+          })
+          const diagnostic = yield* cfgSvc.mcpEnterpriseDiagnostic()
+          const managed = Object.entries(config).flatMap(([alias, entry]) =>
+            isMcpConfigured(entry) && entry.type === "managed" ? [{ alias, server: entry.server }] : [],
+          )
+          const collisions = new Set(
+            managed.flatMap((item) =>
+              managed.some(
+                (other) =>
+                  other.alias !== item.alias &&
+                  (other.server === item.server ||
+                    normalizeEnterpriseAlias(other.alias) === normalizeEnterpriseAlias(item.alias)),
+              )
+                ? [item.alias]
+                : [],
+            ),
+          )
+          yield* Effect.forEach(
+            Object.entries(config).sort((a, b) => a[0].localeCompare(b[0])),
+            ([key, mcp]) =>
+              Effect.gen(function* () {
+                if (!isMcpConfigured(mcp) || mcp.type !== "managed" || mcp.enabled === false) {
+                  s.status[key] = { status: "disabled" }
+                  return
+                }
+                if (diagnostic.managedPolicy?.mode !== "connect") {
+                  s.status[key] = { status: "disabled" }
+                  return
+                }
+                if (collisions.has(key)) {
+                  s.status[key] = {
+                    status: "failed",
+                    error: "[MCP_NAME_COLLISION] Managed reference ownership is ambiguous.",
+                  }
+                  return
+                }
+                const input = {
+                  enterpriseMode: true,
+                  policy: diagnostic.managedPolicy,
+                  policySource: diagnostic.policySource,
+                  unmanagedPolicySources: diagnostic.unmanagedPolicySources,
+                  references: diagnostic.references,
+                  referenceSources: diagnostic.referenceSources,
+                  requestedReference: key,
+                  platform: process.platform,
+                  configurationInvalid: diagnostic.configurationInvalid,
+                }
+                const admission = diagnoseEnterpriseMcp(input)
+                const failed = admission.checks
+                  .concat(admission.references[0]?.checks ?? [])
+                  .find((check) => check.status === "fail")
+                if (failed) {
+                  s.status[key] = { status: "failed", error: `[${failed.code}] ${failed.message}` }
+                  return
+                }
+                let connection: EnterpriseMcpConnection | undefined
+                const controller = new AbortController()
+                s.enterpriseAttempts[key] = controller
+                const result = yield* Effect.exit(
+                  Effect.tryPromise(() =>
+                    connectEnterpriseMcp(
+                      admitEnterpriseMcpHttpServer(input, key),
+                      () => {
+                        if (s.enterpriseConnections[key] !== connection) return
+                        delete s.enterpriseConnections[key]
+                        s.status[key] = { status: "failed", error: "[MCP_CONNECTION_FAILED] Connection closed." }
+                      },
+                      controller.signal,
+                    ),
+                  ),
+                )
+                delete s.enterpriseAttempts[key]
+                if (Exit.isFailure(result)) {
+                  const error = Cause.squash(result.cause)
+                  s.status[key] = {
+                    status: "failed",
+                    error: error instanceof Error ? error.message : "[MCP_CONNECTION_FAILED] MCP initialize failed.",
+                  }
+                  return
+                }
+                connection = result.value
+                s.enterpriseConnections[key] = connection
+                s.status[key] = { status: "connected" }
+              }),
+            { concurrency: 1 },
+          )
+          return s
+        }
 
         yield* Effect.forEach(
           Object.entries(config),
@@ -606,11 +714,14 @@ const layer = Layer.effect(
     const status = Effect.fn("MCP.status")(function* () {
       if (Flag.OPENCODE_ENTERPRISE_MODE) {
         pendingOAuthTransports.clear()
+        const s = yield* InstanceState.get(state)
         const config = (yield* cfgSvc.get()).mcp ?? {}
         return Object.fromEntries(
-          Object.entries(config).flatMap(([name, entry]) =>
-            isMcpConfigured(entry) ? [[name, { status: "disabled" } satisfies Status]] : [],
-          ),
+          Object.entries(config)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .flatMap(([name, entry]) =>
+              isMcpConfigured(entry) ? [[name, s.status[name] ?? ({ status: "disabled" } satisfies Status)]] : [],
+            ),
         )
       }
       const s = yield* InstanceState.get(state)

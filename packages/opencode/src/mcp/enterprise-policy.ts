@@ -10,8 +10,13 @@ export const DiagnosticCodes = [
   "MCP_POLICY_MANAGED",
   "MCP_POLICY_NOT_MANAGED",
   "MCP_POLICY_MODE_DIAGNOSE",
+  "MCP_POLICY_MODE_CONNECT",
   "MCP_POLICY_MODE_UNSUPPORTED",
   "MCP_OPERATIONALLY_DISABLED",
+  "MCP_CONNECTION_ELIGIBLE",
+  "MCP_CONNECTION_OPERATIONAL",
+  "MCP_CONNECTION_DISABLED",
+  "MCP_CONNECTION_FAILED",
   "MCP_REFERENCE_DECLARED",
   "MCP_REFERENCE_UNKNOWN",
   "MCP_REFERENCE_DISABLED",
@@ -165,7 +170,12 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     input.enterpriseMode
       ? pass("MCP_ENTERPRISE_MODE_ENABLED", "Enterprise mode is enabled.")
       : info("MCP_ENTERPRISE_MODE_DISABLED", "Enterprise mode is disabled; policy is diagnostic only."),
-    info("MCP_OPERATIONALLY_DISABLED", "MCP is operationally disabled in Phase 1."),
+    info(
+      input.policy?.mode === "connect" ? "MCP_CONNECTION_OPERATIONAL" : "MCP_OPERATIONALLY_DISABLED",
+      input.policy?.mode === "connect"
+        ? "Managed remote connection initialization is operational."
+        : "Managed remote connection initialization is disabled.",
+    ),
   ]
   const policyPresent = !!input.policy || input.unmanagedPolicySources.length > 0
   if (input.configurationInvalid)
@@ -185,7 +195,12 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
         "Policy provenance is administrator-managed.",
       ),
     )
-    checks.push(pass("MCP_POLICY_MODE_DIAGNOSE", "Policy mode is diagnose."))
+    checks.push(
+      pass(
+        input.policy.mode === "connect" ? "MCP_POLICY_MODE_CONNECT" : "MCP_POLICY_MODE_DIAGNOSE",
+        `Policy mode is ${input.policy.mode}.`,
+      ),
+    )
   } else if (input.unmanagedPolicySources.length > 0) {
     checks.push(fail("MCP_POLICY_NOT_MANAGED", "Enterprise MCP policy was supplied only by untrusted configuration."))
   }
@@ -247,6 +262,7 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     else serverAliases.set(value.server, alias)
     if (value.enabled === false) {
       referenceChecks.push(info("MCP_REFERENCE_DISABLED", "Reference is disabled."))
+      referenceChecks.push(info("MCP_CONNECTION_DISABLED", "Managed connection is disabled for this reference."))
       return referenceResult(alias, value.server, source, referenceChecks)
     }
     if (!input.policy) {
@@ -275,6 +291,12 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     referenceChecks.push(...diagnoseServer(server))
     if (!referenceChecks.some((check) => check.status === "fail"))
       referenceChecks.push(pass("MCP_REFERENCE_ALLOWED", "Reference passes Phase 1 admission diagnostics."))
+    if (!referenceChecks.some((check) => check.status === "fail"))
+      referenceChecks.push(
+        input.policy.mode === "connect"
+          ? pass("MCP_CONNECTION_ELIGIBLE", "Managed reference is eligible for connection initialization.")
+          : info("MCP_CONNECTION_DISABLED", "Policy diagnose mode does not permit connection initialization."),
+      )
     return referenceResult(alias, value.server, source, referenceChecks, sanitizeServer(server))
   })
 
@@ -285,7 +307,12 @@ export function diagnoseEnterpriseMcp(input: AdmissionInput) {
     checks,
     references,
     corrections: corrections(all),
-    summary: { status: errors ? ("fail" as const) : ("pass" as const), errors, warnings, operationallyEnabled: false },
+    summary: {
+      status: errors ? ("fail" as const) : ("pass" as const),
+      errors,
+      warnings,
+      operationallyEnabled: input.enterpriseMode && input.policy?.mode === "connect" && !errors,
+    },
   })
 }
 

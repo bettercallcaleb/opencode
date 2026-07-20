@@ -24,7 +24,11 @@ export function buildDoctorMcpReport(input: {
   return redact({
     schemaVersion: 1 as const,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
-    binary: { version: InstallationVersion, platform: input.platform ?? process.platform, arch: input.arch ?? process.arch },
+    binary: {
+      version: InstallationVersion,
+      platform: input.platform ?? process.platform,
+      arch: input.arch ?? process.arch,
+    },
     enterprise: { enabled: input.enterpriseMode },
     policy: {
       present: !!input.diagnostic.managedPolicy || input.diagnostic.unmanagedPolicySources.length > 0,
@@ -40,6 +44,21 @@ export function buildDoctorMcpReport(input: {
       mode: input.diagnostic.managedPolicy?.mode,
       projectReferences: input.diagnostic.managedPolicy?.projectReferences,
       limits: input.diagnostic.managedPolicy?.limits,
+    },
+    runtime: {
+      schemaVersion: 1 as const,
+      connectionMode: input.diagnostic.managedPolicy?.mode ?? "unconfigured",
+      managedRemoteConnectionPermitted:
+        input.enterpriseMode &&
+        input.diagnostic.managedPolicy?.mode === "connect" &&
+        admission.summary.status === "pass",
+      exposedCapabilities: {
+        tools: false,
+        prompts: false,
+        resources: false,
+        resourceTemplates: false,
+        instructions: false,
+      },
     },
     references: admission.references,
     checks: admission.checks,
@@ -62,23 +81,34 @@ export function formatDoctorMcpReport(report: ReturnType<typeof buildDoctorMcpRe
     lines.push("", `Reference ${reference.alias}: ${reference.status.toUpperCase()}`)
     if (reference.server) lines.push(`  Server policy: ${reference.server}`)
     if (reference.constraints) {
-      lines.push(`  Transport constraints: ${reference.constraints.transport}; redirects ${reference.constraints.redirects}`)
+      lines.push(
+        `  Transport constraints: ${reference.constraints.transport}; redirects ${reference.constraints.redirects}`,
+      )
       lines.push("  Authentication constraints: OAuth prohibited; secret references only")
       lines.push(
         `  Capability constraints: tools ${reference.constraints.capabilities.tools.mode}; resources/prompts/instructions denied`,
       )
     }
     if (verbose)
-      lines.push(...reference.checks.map((check) => `  [${check.status.toUpperCase()}] ${check.code}: ${check.message}`))
+      lines.push(
+        ...reference.checks.map((check) => `  [${check.status.toUpperCase()}] ${check.code}: ${check.message}`),
+      )
   }
   lines.push("", `Limits: ${report.policy.limits ? "explicit and bounded" : "not available"}`)
-  lines.push("Operational state: disabled")
+  lines.push(
+    `Operational state: ${report.runtime.managedRemoteConnectionPermitted ? "managed remote connection permitted" : "disabled"}`,
+  )
   if (report.suggestedCorrections.length) {
     lines.push("", "Suggested corrections:")
     lines.push(...report.suggestedCorrections.map((correction) => `  - ${correction}`))
   }
-  lines.push("", "MCP is operationally disabled in Phase 1.")
-  lines.push("A policy PASS does not establish a connection or start a process.", "")
+  if (report.runtime.managedRemoteConnectionPermitted) {
+    lines.push("", "Managed remote connection is permitted.")
+    lines.push("MCP tools, prompts, resources and instructions remain disabled.", "")
+    return lines.join("\n")
+  }
+  lines.push("", "Managed remote connection is disabled.")
+  lines.push("A policy PASS does not establish a connection or start a process in diagnose mode.", "")
   return lines.join("\n")
 }
 
@@ -101,7 +131,9 @@ function redactString(value: string) {
 }
 
 function secretKey(key: string) {
-  return /authorization|cookie|proxy.*credential|access.?token|refresh.?token|client.?secret|password|secret.?value/i.test(key)
+  return /authorization|cookie|proxy.*credential|access.?token|refresh.?token|client.?secret|password|secret.?value/i.test(
+    key,
+  )
 }
 
 function safePath(value: string) {

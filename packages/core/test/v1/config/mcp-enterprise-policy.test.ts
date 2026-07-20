@@ -65,6 +65,12 @@ describe("enterprise MCP configuration schemas", () => {
     expect(succeeds(ConfigMCPEnterprisePolicyV1.Info, policy)).toBe(true)
   })
 
+  test("accepts explicit connect mode", () => {
+    expect(Schema.decodeUnknownSync(ConfigMCPEnterprisePolicyV1.Info)({ ...policy, mode: "connect" }).mode).toBe(
+      "connect",
+    )
+  })
+
   test.each([
     [{ ...policy, unknown: true }],
     [{ ...policy, audit: { ...policy.audit, unknown: true } }],

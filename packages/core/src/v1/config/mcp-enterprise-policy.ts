@@ -64,7 +64,7 @@ export const Limits = Schema.Struct({
 })
 
 export const Info = Schema.Struct({
-  mode: Schema.Literal("diagnose"),
+  mode: Schema.Literals(["diagnose", "connect"]),
   projectReferences: Schema.Boolean,
   audit: Schema.Struct({
     mode: Schema.Literals(["off", "decisions"]),

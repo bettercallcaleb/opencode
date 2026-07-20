@@ -324,8 +324,6 @@ function requestAtAddress(
   return new Promise<NetworkResponse>((resolve, reject) => {
     if (signal?.aborted) return reject(failure("MCP_HTTP_ABORTED", "Enterprise MCP request was aborted."))
     const controller = new AbortController()
-    const abort = () => controller.abort()
-    signal?.addEventListener("abort", abort, { once: true })
     const options: RequestOptions = {
       protocol: target.protocol,
       hostname: address.address,
@@ -366,6 +364,14 @@ function requestAtAddress(
             receive,
           )
         : http.request(options, receive)
+    const abort = () => {
+      const error = failure("MCP_HTTP_ABORTED", "Enterprise MCP request was aborted.")
+      controller.abort(error)
+      request.destroy(error)
+      request.socket?.destroy(error)
+    }
+    signal?.addEventListener("abort", abort, { once: true })
+    if (signal?.aborted) abort()
     const connectTimer = setTimeout(() => {
       request.destroy(failure("MCP_HTTP_CONNECT_TIMEOUT", "Enterprise MCP connection timed out."))
     }, admitted.limits.connectTimeoutMs)
