@@ -1,9 +1,12 @@
 import path from "node:path"
+import { createServer, type IncomingMessage } from "node:http"
 import { pathToFileURL } from "node:url"
 import { expect } from "bun:test"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import {
+  CallToolRequestSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
@@ -17,6 +20,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Effect, Exit } from "effect"
 import type { MCP as MCPNS } from "../../src/mcp/index"
 import { MCP } from "../../src/mcp/index"
+import { McpCatalog } from "../../src/mcp/catalog"
 import { McpOAuthCallback } from "../../src/mcp/oauth-callback"
 import { TestInstance } from "../fixture/fixture"
 import { pollWithTimeout, testEffect } from "../lib/effect"
@@ -40,19 +44,33 @@ interface LifecycleServerState {
   roots?: Array<{ uri: string; name?: string }>
   requests: string[]
   aborted: number
+  calls: string[]
 }
 
-function lifecycleServer(input?: { capabilities?: ServerCapabilities; instructions?: string; requestRoots?: boolean }) {
+function lifecycleServer(input?: {
+  capabilities?: ServerCapabilities
+  instructions?: string
+  requestRoots?: boolean
+  toolName?: string
+  toolResult?: string
+}) {
   const capabilities = input?.capabilities ?? { tools: {}, prompts: {}, resources: {} }
   return Effect.acquireRelease(
     Effect.promise(async () => {
       const state: LifecycleServerState = {
-        tools: [{ name: "test_tool", description: "A test tool", inputSchema: { type: "object", properties: {} } }],
+        tools: [
+          {
+            name: input?.toolName ?? "test_tool",
+            description: "A test tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
         prompts: [],
         resources: [],
         resourceTemplates: [],
         requests: [],
         aborted: 0,
+        calls: [],
       }
 
       const makeProtocol = async () => {
@@ -70,6 +88,12 @@ function lifecycleServer(input?: { capabilities?: ServerCapabilities; instructio
             if (state.listToolsError) throw new Error(state.listToolsError)
             const page = state.toolPages?.[request.params?.cursor ?? "initial"]
             return Promise.resolve({ tools: page?.items ?? state.tools, nextCursor: page?.nextCursor })
+          })
+          protocol.setRequestHandler(CallToolRequestSchema, ({ params }) => {
+            state.calls.push(params.name)
+            return Promise.resolve({
+              content: [{ type: "text" as const, text: input?.toolResult ?? "LIFECYCLE_MCP_OK" }],
+            })
           })
         }
         if (capabilities.prompts) {
@@ -140,6 +164,89 @@ function lifecycleServer(input?: { capabilities?: ServerCapabilities; instructio
     (server) => Effect.promise(server.close),
   )
 }
+
+function legacySseServer() {
+  return Effect.acquireRelease(
+    Effect.promise(async () => {
+      const state = {
+        streamableAttempts: 0,
+        sseConnections: 0,
+        messagePosts: 0,
+        initialized: 0,
+        toolsListed: 0,
+        toolsCalled: 0,
+        paths: [] as string[],
+      }
+      const protocol = new Server({ name: "mcp-legacy-sse", version: "1.0.0" }, { capabilities: { tools: {} } })
+      protocol.oninitialized = () => state.initialized++
+      protocol.setRequestHandler(ListToolsRequestSchema, () => {
+        state.toolsListed++
+        return Promise.resolve({
+          tools: [{ name: "legacy_sentinel", inputSchema: { type: "object", properties: {} } }],
+        })
+      })
+      protocol.setRequestHandler(CallToolRequestSchema, ({ params }) => {
+        state.toolsCalled++
+        if (params.name !== "legacy_sentinel") throw new Error(`Unknown tool: ${params.name}`)
+        return Promise.resolve({ content: [{ type: "text" as const, text: "LEGACY_SSE_OK" }] })
+      })
+
+      let transport: SSEServerTransport | undefined
+      const http = createServer((request, response) => {
+        const url = new URL(request.url ?? "/", "http://127.0.0.1")
+        state.paths.push(`${request.method} ${url.pathname}`)
+        if (request.method === "POST" && url.pathname === "/legacy") {
+          state.streamableAttempts++
+          response.writeHead(405).end("Streamable HTTP unavailable")
+          return
+        }
+        if (request.method === "GET" && url.pathname === "/legacy") {
+          state.sseConnections++
+          transport = new SSEServerTransport("/messages", response)
+          void protocol.connect(transport).catch((error) => response.destroy(error))
+          return
+        }
+        if (request.method === "POST" && url.pathname === "/messages" && transport) {
+          state.messagePosts++
+          void readJson(request)
+            .then((body) => transport?.handlePostMessage(request, response, body))
+            .catch((error) => response.destroy(error))
+          return
+        }
+        response.writeHead(404).end("Not found")
+      })
+      await new Promise<void>((resolve, reject) => {
+        http.once("error", reject)
+        http.listen(0, "127.0.0.1", resolve)
+      })
+      const address = http.address()
+      if (!address || typeof address === "string") throw new Error("Legacy SSE listener has no TCP address")
+
+      return {
+        state,
+        url: `http://127.0.0.1:${address.port}/legacy`,
+        close: async () => {
+          await protocol.close().catch(() => {})
+          await transport?.close().catch(() => {})
+          await new Promise<void>((resolve, reject) => http.close((error) => (error ? reject(error) : resolve())))
+        },
+      }
+    }),
+    (server) => Effect.promise(server.close),
+  )
+}
+
+async function readJson(request: IncomingMessage) {
+  const chunks: Buffer[] = []
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+}
+
+const execute = (tool: MCPNS.McpTool) =>
+  McpCatalog.convertTool(tool.def, tool.client, tool.timeout).execute?.({}, {
+    toolCallId: "call_mcp",
+    abortSignal: new AbortController().signal,
+  } as never)
 
 function hangingLifecycleServer() {
   return Effect.acquireRelease(
@@ -214,6 +321,95 @@ it.instance(
       )
     }),
   { init: (directory) => Effect.promise(() => Bun.$`mkdir -p ${path.join(directory, "plugins/sub")}`.quiet()) },
+)
+
+it.instance("falls back from Streamable HTTP to a live legacy SSE MCP server", () =>
+  Effect.gen(function* () {
+    const server = yield* legacySseServer()
+    const mcp = yield* MCP.Service
+    yield* mcp.add("legacy-sse", remote(server.url))
+
+    expect((yield* mcp.status())["legacy-sse"]?.status).toBe("connected")
+    const tool = (yield* mcp.tools())["legacy-sse_legacy_sentinel"]
+    expect(tool).toBeDefined()
+    expect(yield* Effect.promise(() => execute(tool!)!)).toMatchObject({
+      content: [{ type: "text", text: "LEGACY_SSE_OK" }],
+    })
+    expect(server.state).toMatchObject({
+      streamableAttempts: 1,
+      sseConnections: 1,
+      initialized: 1,
+      toolsListed: 1,
+      toolsCalled: 1,
+    })
+    expect(server.state.messagePosts).toBeGreaterThanOrEqual(4)
+    expect(server.state.paths.every((item) => item.endsWith(" /legacy") || item.endsWith(" /messages"))).toBe(true)
+
+    yield* mcp.disconnect("legacy-sse")
+    expect((yield* mcp.status())["legacy-sse"]?.status).toBe("disabled")
+  }),
+)
+
+it.instance(
+  "keeps a managed reference inert beside callable local and remote MCP servers",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* lifecycleServer({ toolName: "remote_sentinel", toolResult: "REMOTE_MCP_OK" })
+      const test = yield* TestInstance
+      const pidFile = path.join(test.directory, "local-mcp.pid")
+      const mcp = yield* MCP.Service
+      yield* mcp.add("local-test", {
+        type: "local",
+        command: [process.execPath, stdioFixture, "--callable"],
+        environment: { MCP_LIFECYCLE_PID_FILE: pidFile },
+      })
+      yield* mcp.add("remote-test", remote(server.url))
+
+      expect(yield* mcp.status()).toMatchObject({
+        "local-test": { status: "connected" },
+        "remote-test": { status: "connected" },
+        "managed-test": { status: "disabled" },
+      })
+      expect(Object.keys(yield* mcp.clients()).sort()).toEqual(["local-test", "remote-test"])
+      const tools = yield* mcp.tools()
+      expect(Object.keys(tools).sort()).toEqual([
+        "local-test_current_directory",
+        "local-test_local_sentinel",
+        "remote-test_remote_sentinel",
+      ])
+      expect(yield* Effect.promise(() => execute(tools["local-test_local_sentinel"]!)!)).toMatchObject({
+        content: [{ type: "text", text: "LOCAL_MCP_OK" }],
+      })
+      expect(yield* Effect.promise(() => execute(tools["remote-test_remote_sentinel"]!)!)).toMatchObject({
+        content: [{ type: "text", text: "REMOTE_MCP_OK" }],
+      })
+      expect(server.state.calls).toEqual(["remote_sentinel"])
+      expect(Object.keys(yield* mcp.prompts()).some((key) => key.startsWith("managed-test:"))).toBe(false)
+      expect(Object.keys(yield* mcp.resources()).some((key) => key.startsWith("managed-test:"))).toBe(false)
+      expect(Object.keys(yield* mcp.resourceTemplates()).some((key) => key.startsWith("managed-test:"))).toBe(false)
+      expect((yield* mcp.instructions()).some((item) => item.name === "managed-test")).toBe(false)
+
+      const pid = Number(yield* Effect.promise(() => Bun.file(pidFile).text()))
+      yield* mcp.disconnect("local-test")
+      yield* mcp.disconnect("remote-test")
+      yield* pollWithTimeout(
+        Effect.sync(() => {
+          try {
+            process.kill(pid, 0)
+            return undefined
+          } catch {
+            return true
+          }
+        }),
+        "local MCP fixture process was not terminated",
+      )
+      yield* pollWithTimeout(
+        Effect.sync(() => (server.state.aborted > 0 ? true : undefined)),
+        "remote MCP transport was not closed",
+      )
+      expect(Object.keys(yield* mcp.clients())).toEqual([])
+    }),
+  { config: { mcp: { "managed-test": { type: "managed", server: "managed-test" } } } },
 )
 
 it.instance("tools() reuses cached definitions until a protocol notification", () =>
